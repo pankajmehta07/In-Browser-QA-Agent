@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+
+server/data/runs.json
+server/data/approvals.json
+server/data/tests.json
+server/data/screenshots/
+
+playwright-report
+test-results
+
+server/data/*.json

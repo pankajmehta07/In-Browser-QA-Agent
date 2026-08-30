@@ -1,0 +1,16 @@
+{
+  "name": "server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@playwright/test": "1.49.1",
+    "cors": "2.8.5",
+    "express": "4.21.2"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,412 @@
+[
+  {
+    "id": "8ea594b3-5f5c-4351-9714-af4b97a9cac8",
+    "savedAt": "2026-08-02T17:19:45.891Z",
+    "status": "passed",
+    "flaky": false,
+    "durationMs": 2298,
+    "runCount": 1,
+    "healedCount": 0,
+    "wasHealed": false,
+    "totalCostUsd": 0,
+    "rootCauseTitle": null,
+    "result": {
+      "status": "passed",
+      "startedAt": "2026-08-02T17:19:43.369Z",
+      "finishedAt": "2026-08-02T17:19:45.667Z",
+      "durationMs": 2298,
+      "generatedSteps": [
+        {
+          "action": "goto",
+          "target": "Login"
+        },
+        {
+          "action": "type",
+          "value": "user@example.com",
+          "target": "Email"
+        },
+        {
+          "action": "type",
+          "value": "password123",
+          "target": "Password"
+        },
+        {
+          "action": "click",
+          "target": "Login"
+        },
+        {
+          "action": "check_visible",
+          "target": "Dashboard"
+        },
+        {
+          "action": "click",
+          "target": "Settings"
+        },
+        {
+          "action": "check_contains",
+          "target": "Email",
+          "value": "user@example.com"
+        }
+      ],
+      "steps": [
+        {
+          "name": "Go to Login",
+          "status": "passed",
+          "durationMs": 23
+        },
+        {
+          "name": "Type into Email",
+          "status": "passed",
+          "durationMs": 319
+        },
+        {
+          "name": "Type into Password",
+          "status": "passed",
+          "durationMs": 323
+        },
+        {
+          "name": "Click Login",
+          "status": "passed",
+          "durationMs": 340,
+          "selectorUsed": "role=button[name=\"Login\"]",
+          "wasHealed": false,
+          "oldSelector": null,
+          "newSelector": "role=button[name=\"Login\"]",
+          "resolutionStrategy": "exact_role_match",
+          "confidence": 1,
+          "estimatedCostUsd": 0,
+          "resolutionAttempts": [
+            {
+              "tier": "exact_role_match",
+              "description": "Try exact button name \"Login\"",
+              "estimatedCostUsd": 0,
+              "confidence": 1,
+              "status": "passed"
+            }
+          ]
+        },
+        {
+          "name": "Check Dashboard is visible",
+          "status": "passed",
+          "durationMs": 7
+        },
+        {
+          "name": "Click Settings",
+          "status": "passed",
+          "durationMs": 334,
+          "selectorUsed": "role=button[name=\"Settings\"]",
+          "wasHealed": false,
+          "oldSelector": null,
+          "newSelector": "role=button[name=\"Settings\"]",
+          "resolutionStrategy": "exact_role_match",
+          "confidence": 1,
+          "estimatedCostUsd": 0,
+          "resolutionAttempts": [
+            {
+              "tier": "exact_role_match",
+              "description": "Try exact button name \"Settings\"",
+              "estimatedCostUsd": 0,
+              "confidence": 1,
+              "status": "passed"
+            }
+          ]
+        },
+        {
+          "name": "Check Email contains user@example.com",
+          "status": "passed",
+          "durationMs": 6
+        }
+      ],
+      "accessibility": {
+        "initial": [
+          {
+            "role": "heading",
+            "name": "Acme Settings Portal",
+            "selector": "h1",
+            "id": null,
+            "tagName": "h1"
+          },
+          {
+            "role": "button",
+            "name": "DOM Variant: original",
+            "selector": "button",
+            "id": null,
+            "tagName": "button"
+          },
+          {
+            "role": "heading",
+            "name": "Login",
+            "selector": "h2",
+            "id": null,
+            "tagName": "h2"
+          },
+          {
+            "role": "textbox",
+            "name": "Email",
+            "selector": "#email",
+            "id": "email",
+            "tagName": "input"
+          },
+          {
+            "role": "textbox",
+            "name": "Password",
+            "selector": "#password",
+            "id": "password",
+            "tagName": "input"
+          },
+          {
+            "role": "button",
+            "name": "Login",
+            "selector": "#login-button",
+            "id": "login-button",
+            "tagName": "button"
+          }
+        ],
+        "final": [
+          {
+            "role": "heading",
+            "name": "Acme Settings Portal",
+            "selector": "h1",
+            "id": null,
+            "tagName": "h1"
+          },
+          {
+            "role": "button",
+            "name": "DOM Variant: original",
+            "selector": "button",
+            "id": null,
+            "tagName": "button"
+          },
+          {
+            "role": "heading",
+            "name": "Settings",
+            "selector": "h2",
+            "id": null,
+            "tagName": "h2"
+          },
+          {
+            "role": "textbox",
+            "name": "Email",
+            "selector": "#settings-email",
+            "id": "settings-email",
+            "tagName": "input"
+          },
+          {
+            "role": "button",
+            "name": "Back to Dashboard",
+            "selector": "button",
+            "id": null,
+            "tagName": "button"
+          }
+        ]
+      },
+      "runNumber": 1,
+      "rootCause": null
+    }
+  },
+  {
+    "id": "93aaf259-38ec-4946-a1a5-50f8581ee1f6",
+    "savedAt": "2026-08-02T17:10:27.493Z",
+    "status": "passed",
+    "flaky": false,
+    "durationMs": 2282,
+    "runCount": 1,
+    "healedCount": 0,
+    "wasHealed": false,
+    "totalCostUsd": 0,
+    "rootCauseTitle": null,
+    "result": {
+      "status": "passed",
+      "startedAt": "2026-08-02T17:10:25.022Z",
+      "finishedAt": "2026-08-02T17:10:27.304Z",
+      "durationMs": 2282,
+      "generatedSteps": [
+        {
+          "action": "goto",
+          "target": "Login"
+        },
+        {
+          "action": "type",
+          "value": "user@example.com",
+          "target": "Email"
+        },
+        {
+          "action": "type",
+          "value": "password123",
+          "target": "Password"
+        },
+        {
+          "action": "click",
+          "target": "Login"
+        },
+        {
+          "action": "check_visible",
+          "target": "Dashboard"
+        },
+        {
+          "action": "click",
+          "target": "Settings"
+        },
+        {
+          "action": "check_contains",
+          "target": "Email",
+          "value": "user@example.com"
+        }
+      ],
+      "steps": [
+        {
+          "name": "Go to Login",
+          "status": "passed",
+          "durationMs": 28
+        },
+        {
+          "name": "Type into Email",
+          "status": "passed",
+          "durationMs": 312
+        },
+        {
+          "name": "Type into Password",
+          "status": "passed",
+          "durationMs": 322
+        },
+        {
+          "name": "Click Login",
+          "status": "passed",
+          "durationMs": 341,
+          "selectorUsed": "role=button[name=\"Login\"]",
+          "wasHealed": false,
+          "oldSelector": null,
+          "newSelector": "role=button[name=\"Login\"]",
+          "resolutionStrategy": "exact_role_match",
+          "confidence": 1,
+          "estimatedCostUsd": 0,
+          "resolutionAttempts": [
+            {
+              "tier": "exact_role_match",
+              "description": "Try exact button name \"Login\"",
+              "estimatedCostUsd": 0,
+              "confidence": 1,
+              "status": "passed"
+            }
+          ]
+        },
+        {
+          "name": "Check Dashboard is visible",
+          "status": "passed",
+          "durationMs": 5
+        },
+        {
+          "name": "Click Settings",
+          "status": "passed",
+          "durationMs": 351,
+          "selectorUsed": "role=button[name=\"Settings\"]",
+          "wasHealed": false,
+          "oldSelector": null,
+          "newSelector": "role=button[name=\"Settings\"]",
+          "resolutionStrategy": "exact_role_match",
+          "confidence": 1,
+          "estimatedCostUsd": 0,
+          "resolutionAttempts": [
+            {
+              "tier": "exact_role_match",
+              "description": "Try exact button name \"Settings\"",
+              "estimatedCostUsd": 0,
+              "confidence": 1,
+              "status": "passed"
+            }
+          ]
+        },
+        {
+          "name": "Check Email contains user@example.com",
+          "status": "passed",
+          "durationMs": 4
+        }
+      ],
+      "accessibility": {
+        "initial": [
+          {
+            "role": "heading",
+            "name": "Acme Settings Portal",
+            "selector": "h1",
+            "id": null,
+            "tagName": "h1"
+          },
+          {
+            "role": "button",
+            "name": "DOM Variant: original",
+            "selector": "button",
+            "id": null,
+            "tagName": "button"
+          },
+          {
+            "role": "heading",
+            "name": "Login",
+            "selector": "h2",
+            "id": null,
+            "tagName": "h2"
+          },
+          {
+            "role": "textbox",
+            "name": "Email",
+            "selector": "#email",
+            "id": "email",
+            "tagName": "input"
+          },
+          {
+            "role": "textbox",
+            "name": "Password",
+            "selector": "#password",
+            "id": "password",
+            "tagName": "input"
+          },
+          {
+            "role": "button",
+            "name": "Login",
+            "selector": "#login-button",
+            "id": "login-button",
+            "tagName": "button"
+          }
+        ],
+        "final": [
+          {
+            "role": "heading",
+            "name": "Acme Settings Portal",
+            "selector": "h1",
+            "id": null,
+            "tagName": "h1"
+          },
+          {
+            "role": "button",
+            "name": "DOM Variant: original",
+            "selector": "button",
+            "id": null,
+            "tagName": "button"
+          },
+          {
+            "role": "heading",
+            "name": "Settings",
+            "selector": "h2",
+            "id": null,
+            "tagName": "h2"
+          },
+          {
+            "role": "textbox",
+            "name": "Email",
+            "selector": "#settings-email",
+            "id": "settings-email",
+            "tagName": "input"
+          },
+          {
+            "role": "button",
+            "name": "Back to Dashboard",
+            "selector": "button",
+            "id": null,
+            "tagName": "button"
+          }
+        ]
+      },
+      "runNumber": 1,
+      "rootCause": null
+    }
+  }
+]

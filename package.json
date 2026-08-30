@@ -1,0 +1,15 @@
+{
+  "name": "in-browser-qa-agent",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/target-app",
+    "apps/dashboard",
+    "server"
+  ],
+  "scripts": {
+    "dev:target": "npm run dev -w apps/target-app",
+    "dev:dashboard": "npm run dev -w apps/dashboard",
+    "dev:server": "npm run dev -w server"
+  }
+}
