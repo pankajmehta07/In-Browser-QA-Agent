@@ -13,3 +13,7 @@ playwright-report
 test-results
 
 server/data/*.json
+
+server/server/data/
+server/**/data/*.json
+server/**/data/screenshots/
