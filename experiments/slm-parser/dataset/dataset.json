@@ -1,0 +1,318 @@
+[
+  {
+    "id": "login-001",
+    "category": "login",
+    "instruction": "Go to Login. Type user@example.com into Email. Type password123 into Password. Click Login.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Login" },
+      { "action": "type",  "target": "Email",    "value": "user@example.com" },
+      { "action": "type",  "target": "Password", "value": "password123" },
+      { "action": "click", "target": "Login" }
+    ]
+  },
+  {
+    "id": "login-002",
+    "category": "login",
+    "instruction": "Navigate to the login page. Enter admin@company.com in the Email field. Enter admin123 in Password. Click the Login button.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Login" },
+      { "action": "type",  "target": "Email",    "value": "admin@company.com" },
+      { "action": "type",  "target": "Password", "value": "admin123" },
+      { "action": "click", "target": "Login" }
+    ]
+  },
+  {
+    "id": "login-003",
+    "category": "login",
+    "instruction": "Open Login. Type wronguser into Email. Type wrongpass into Password. Click Login. Check that Invalid credentials is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Login" },
+      { "action": "type",          "target": "Email",               "value": "wronguser" },
+      { "action": "type",          "target": "Password",            "value": "wrongpass" },
+      { "action": "click",         "target": "Login" },
+      { "action": "check_visible", "target": "Invalid credentials" }
+    ]
+  },
+  {
+    "id": "login-004",
+    "category": "login",
+    "instruction": "Go to Login. Leave Email empty. Type password123 into Password. Click Login. Check error message is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Login" },
+      { "action": "type",          "target": "Password",     "value": "password123" },
+      { "action": "click",         "target": "Login" },
+      { "action": "check_visible", "target": "error message" }
+    ]
+  },
+  {
+    "id": "login-005",
+    "category": "login",
+    "instruction": "Go to Login. Type test@test.com into Email. Type 123456 into Password. Click Login. Check Welcome is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Login" },
+      { "action": "type",          "target": "Email",    "value": "test@test.com" },
+      { "action": "type",          "target": "Password", "value": "123456" },
+      { "action": "click",         "target": "Login" },
+      { "action": "check_visible", "target": "Welcome" }
+    ]
+  },
+
+  {
+    "id": "users-001",
+    "category": "users",
+    "instruction": "Go to Users. Check that Team Members is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Users" },
+      { "action": "check_visible", "target": "Team Members" }
+    ]
+  },
+  {
+    "id": "users-002",
+    "category": "users",
+    "instruction": "Navigate to Users page. Click Invite User. Type newuser@test.com into Email. Click Send Invite.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Users" },
+      { "action": "click", "target": "Invite User" },
+      { "action": "type",  "target": "Email", "value": "newuser@test.com" },
+      { "action": "click", "target": "Send Invite" }
+    ]
+  },
+  {
+    "id": "users-003",
+    "category": "users",
+    "instruction": "Go to Users. Check that the user list contains john@example.com.",
+    "expectedSteps": [
+      { "action": "goto",           "target": "Users" },
+      { "action": "check_contains", "target": "user list", "value": "john@example.com" }
+    ]
+  },
+  {
+    "id": "users-004",
+    "category": "users",
+    "instruction": "Open Users. Click on john@example.com. Click Delete User. Check Deleted successfully is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Users" },
+      { "action": "click",         "target": "john@example.com" },
+      { "action": "click",         "target": "Delete User" },
+      { "action": "check_visible", "target": "Deleted successfully" }
+    ]
+  },
+  {
+    "id": "users-005",
+    "category": "users",
+    "instruction": "Go to Users. Type John into Search. Check that John Doe is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Users" },
+      { "action": "type",          "target": "Search", "value": "John" },
+      { "action": "check_visible", "target": "John Doe" }
+    ]
+  },
+
+  {
+    "id": "projects-001",
+    "category": "projects",
+    "instruction": "Go to Projects. Click New Project. Type Alpha into Project Name. Click Create.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Projects" },
+      { "action": "click", "target": "New Project" },
+      { "action": "type",  "target": "Project Name", "value": "Alpha" },
+      { "action": "click", "target": "Create" }
+    ]
+  },
+  {
+    "id": "projects-002",
+    "category": "projects",
+    "instruction": "Navigate to Projects. Check that Alpha is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Projects" },
+      { "action": "check_visible", "target": "Alpha" }
+    ]
+  },
+  {
+    "id": "projects-003",
+    "category": "projects",
+    "instruction": "Open Projects. Click Alpha. Click Settings. Type Beta into Project Name. Click Save.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Projects" },
+      { "action": "click", "target": "Alpha" },
+      { "action": "click", "target": "Settings" },
+      { "action": "type",  "target": "Project Name", "value": "Beta" },
+      { "action": "click", "target": "Save" }
+    ]
+  },
+  {
+    "id": "projects-004",
+    "category": "projects",
+    "instruction": "Go to Projects. Click Alpha. Check that the project description contains test project.",
+    "expectedSteps": [
+      { "action": "goto",           "target": "Projects" },
+      { "action": "click",          "target": "Alpha" },
+      { "action": "check_contains", "target": "project description", "value": "test project" }
+    ]
+  },
+  {
+    "id": "projects-005",
+    "category": "projects",
+    "instruction": "Go to Projects. Click Alpha. Click Delete. Check Project deleted is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Projects" },
+      { "action": "click",         "target": "Alpha" },
+      { "action": "click",         "target": "Delete" },
+      { "action": "check_visible", "target": "Project deleted" }
+    ]
+  },
+
+  {
+    "id": "billing-001",
+    "category": "billing",
+    "instruction": "Go to Billing. Check that Current Plan is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Billing" },
+      { "action": "check_visible", "target": "Current Plan" }
+    ]
+  },
+  {
+    "id": "billing-002",
+    "category": "billing",
+    "instruction": "Navigate to Profile. Type John Doe into Full Name. Click Save Changes.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Profile" },
+      { "action": "type",  "target": "Full Name", "value": "John Doe" },
+      { "action": "click", "target": "Save Changes" }
+    ]
+  },
+  {
+    "id": "billing-003",
+    "category": "billing",
+    "instruction": "Go to Billing. Click Upgrade Plan. Check that Pro Plan is visible.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Billing" },
+      { "action": "click",         "target": "Upgrade Plan" },
+      { "action": "check_visible", "target": "Pro Plan" }
+    ]
+  },
+  {
+    "id": "billing-004",
+    "category": "billing",
+    "instruction": "Open Profile. Type john@company.com into Email. Type NewPass123 into Password. Click Update.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Profile" },
+      { "action": "type",  "target": "Email",    "value": "john@company.com" },
+      { "action": "type",  "target": "Password", "value": "NewPass123" },
+      { "action": "click", "target": "Update" }
+    ]
+  },
+  {
+    "id": "billing-005",
+    "category": "billing",
+    "instruction": "Go to Billing. Check that the invoice list contains January 2025.",
+    "expectedSteps": [
+      { "action": "goto",           "target": "Billing" },
+      { "action": "check_contains", "target": "invoice list", "value": "January 2025" }
+    ]
+  },
+
+  {
+    "id": "healing-001",
+    "category": "self_healing",
+    "instruction": "Go to Login. Type user@example.com into the email input. Type password123 into the password input. Press the login button.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Login" },
+      { "action": "type",  "target": "Email",    "value": "user@example.com" },
+      { "action": "type",  "target": "Password", "value": "password123" },
+      { "action": "click", "target": "Login" }
+    ]
+  },
+  {
+    "id": "healing-002",
+    "category": "self_healing",
+    "instruction": "Navigate to the users section. Verify the team members section is displayed.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Users" },
+      { "action": "check_visible", "target": "Team Members" }
+    ]
+  },
+  {
+    "id": "healing-003",
+    "category": "self_healing",
+    "instruction": "Open the projects area. Create a new project named Alpha.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Projects" },
+      { "action": "click", "target": "New Project" },
+      { "action": "type",  "target": "Project Name", "value": "Alpha" },
+      { "action": "click", "target": "Create" }
+    ]
+  },
+  {
+    "id": "healing-004",
+    "category": "self_healing",
+    "instruction": "Go to Billing page. Make sure Current Plan text is shown.",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Billing" },
+      { "action": "check_visible", "target": "Current Plan" }
+    ]
+  },
+  {
+    "id": "healing-005",
+    "category": "self_healing",
+    "instruction": "Go to the sign in page. Enter credentials and log in.",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Login" },
+      { "action": "type",  "target": "Email",    "value": "" },
+      { "action": "type",  "target": "Password", "value": "" },
+      { "action": "click", "target": "Login" }
+    ]
+  },
+
+  {
+    "id": "ambiguous-001",
+    "category": "ambiguous",
+    "instruction": "login with admin credentials",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Login" },
+      { "action": "type",  "target": "Email",    "value": "" },
+      { "action": "type",  "target": "Password", "value": "" },
+      { "action": "click", "target": "Login" }
+    ]
+  },
+  {
+    "id": "ambiguous-002",
+    "category": "ambiguous",
+    "instruction": "check if users page works",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Users" },
+      { "action": "check_visible", "target": "Team Members" }
+    ]
+  },
+  {
+    "id": "ambiguous-003",
+    "category": "ambiguous",
+    "instruction": "make sure billing is fine",
+    "expectedSteps": [
+      { "action": "goto",          "target": "Billing" },
+      { "action": "check_visible", "target": "Current Plan" }
+    ]
+  },
+  {
+    "id": "ambiguous-004",
+    "category": "ambiguous",
+    "instruction": "Go to Login!!! type EMAIL = user@example.com... then PASSWORD = pass123 then HIT login!!",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Login" },
+      { "action": "type",  "target": "Email",    "value": "user@example.com" },
+      { "action": "type",  "target": "Password", "value": "pass123" },
+      { "action": "click", "target": "Login" }
+    ]
+  },
+  {
+    "id": "ambiguous-005",
+    "category": "ambiguous",
+    "instruction": "first go to projects then make a new one called Alpha and save it",
+    "expectedSteps": [
+      { "action": "goto",  "target": "Projects" },
+      { "action": "click", "target": "New Project" },
+      { "action": "type",  "target": "Project Name", "value": "Alpha" },
+      { "action": "click", "target": "Create" }
+    ]
+  }
+]
