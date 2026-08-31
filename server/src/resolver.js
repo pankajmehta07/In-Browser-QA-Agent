@@ -160,6 +160,19 @@ export async function resolveButton(page, targetName) {
       ["login::sign in", 0.91],
       ["sign in::login", 0.91],
       ["log in::sign in", 0.91],
+
+      ["add user::new user", 0.92],
+      ["new user::add user", 0.92],
+
+      ["create project::new project", 0.92],
+      ["new project::create project", 0.92],
+
+      ["save user::new user", 0.9],
+      ["new user::save user", 0.9],
+
+      ["save project::new project", 0.9],
+      ["new project::save project", 0.9],
+
       ["save::save changes", 0.9],
       ["settings::settings", 1],
     ]);
