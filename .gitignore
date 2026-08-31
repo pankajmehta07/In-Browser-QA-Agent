@@ -3,6 +3,10 @@ dist
 .env
 .env.local
 *.log
+__pycache__
+.venv
+venv
+results
 
 server/data/runs.json
 server/data/approvals.json
