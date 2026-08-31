@@ -1,7 +1,7 @@
 import path from "node:path";
 import express from "express";
 import cors from "cors";
-import { listTests, saveTest } from "./testStore.js";
+import { deleteTest, listTests, saveTest } from "./testStore.js";
 import { runHardcodedLoginTest, runStructuredTest } from "./runner.js";
 import { parseInstruction } from "./parser.js";
 import { explainFailure } from "./rootCause.js";
@@ -212,6 +212,147 @@ app.post("/tests", async (request, response) => {
     response.status(500).json({
       status: "failed",
       errorMessage: error.message
+    });
+  }
+});
+
+app.delete("/tests/:id", async (request, response) => {
+  try {
+    const deleted = await deleteTest(request.params.id);
+
+    if (!deleted) {
+      response.status(404).json({
+        status: "failed",
+        errorMessage: "Test not found",
+      });
+      return;
+    }
+
+    response.json({
+      status: "passed",
+      deletedId: request.params.id,
+    });
+  } catch (error) {
+    response.status(500).json({
+      status: "failed",
+      errorMessage: error.message,
+    });
+  }
+});
+
+app.post("/run-test-suite", async (request, response) => {
+  try {
+    const { testIds = [], variant = "original", reruns = 1 } = request.body;
+
+    const savedTests = await listTests();
+
+    const selectedTests =
+      testIds.length > 0
+        ? savedTests.filter((test) => testIds.includes(test.id))
+        : savedTests;
+
+    if (selectedTests.length === 0) {
+      response.status(400).json({
+        status: "failed",
+        errorMessage: "No saved tests found for the suite.",
+      });
+      return;
+    }
+
+    const suiteStartedAt = new Date().toISOString();
+    const suiteResults = [];
+
+    for (const test of selectedTests) {
+      const generatedSteps = parseInstruction(test.instruction);
+      const runCount = Math.max(1, Math.min(Number(reruns) || 1, 5));
+      const runResults = [];
+
+      for (let index = 0; index < runCount; index += 1) {
+        const result = await runStructuredTest(generatedSteps, { variant });
+
+        runResults.push({
+          ...result,
+          runNumber: index + 1,
+          rootCause: explainFailure(result),
+          accessibilityAudit: auditAccessibility(
+            result.accessibility?.final || [],
+          ),
+        });
+      }
+
+      const finalTestResult = classifyRerunResults(runResults);
+
+      suiteResults.push({
+        id: test.id,
+        name: test.name,
+        instruction: test.instruction,
+        status: finalTestResult.status,
+        flaky: finalTestResult.flaky || false,
+        durationMs: finalTestResult.durationMs,
+        generatedSteps,
+        result: finalTestResult,
+      });
+    }
+
+    const suiteFinishedAt = new Date().toISOString();
+
+    const passedCount = suiteResults.filter(
+      (test) => test.status === "passed",
+    ).length;
+
+    const failedCount = suiteResults.filter(
+      (test) => test.status === "failed",
+    ).length;
+
+    const flakyCount = suiteResults.filter(
+      (test) => test.status === "flaky" || test.flaky,
+    ).length;
+
+    const suiteStatus =
+      failedCount > 0 ? "failed" : flakyCount > 0 ? "flaky" : "passed";
+
+    const suiteResult = {
+      status: suiteStatus,
+      startedAt: suiteStartedAt,
+      finishedAt: suiteFinishedAt,
+      durationMs:
+        new Date(suiteFinishedAt).getTime() -
+        new Date(suiteStartedAt).getTime(),
+      type: "suite",
+      testCount: suiteResults.length,
+      passedCount,
+      failedCount,
+      flakyCount,
+      variant,
+      reruns: Math.max(1, Math.min(Number(reruns) || 1, 5)),
+      tests: suiteResults,
+      rootCause:
+        suiteStatus === "passed"
+          ? null
+          : {
+              title: "Test suite contains failing or flaky tests",
+              summary:
+                "At least one saved test did not pass during the suite run.",
+              likelyCause:
+                "One or more workflows may have a broken selector, changed UI text, flaky behavior, or unsupported instruction.",
+              recommendation:
+                "Open the failing test result, inspect the failed step, and approve healing if the DOM change is intentional.",
+              evidence: suiteResults
+                .map((test) => `${test.name}: ${test.status}`)
+                .join(", "),
+            },
+    };
+
+    const savedRun = await saveRun(suiteResult);
+
+    response.json({
+      ...suiteResult,
+      savedRunId: savedRun.id,
+    });
+  } catch (error) {
+    response.status(500).json({
+      status: "failed",
+      errorMessage: error.message,
     });
   }
 });

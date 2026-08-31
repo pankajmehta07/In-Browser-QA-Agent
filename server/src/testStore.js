@@ -48,6 +48,21 @@ export async function listTests() {
   }
 }
 
+export async function deleteTest(testId) {
+  await ensureStore();
+
+  const tests = await listTests();
+  const remainingTests = tests.filter((test) => test.id !== testId);
+
+  if (remainingTests.length === tests.length) {
+    return false;
+  }
+
+  await fs.writeFile(testsFilePath, JSON.stringify(remainingTests, null, 2));
+
+  return true;
+}
+
 async function ensureStore() {
   await fs.mkdir(dataDirectory, { recursive: true });
 

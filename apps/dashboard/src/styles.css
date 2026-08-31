@@ -367,7 +367,6 @@ select {
   margin: 12px 0;
 }
 
-
 .history-panel {
   grid-column: 1 / -1;
 }
@@ -549,4 +548,27 @@ select {
   margin: 4px 0 0;
   color: #607086;
   font-size: 14px;
+}
+
+.suite-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.suite-stats span {
+  border: 1px solid #d9e1ee;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.saved-test-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
