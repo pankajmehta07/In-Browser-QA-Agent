@@ -217,9 +217,6 @@ def call_nvidia(model_name: str, prompt: str):
     if model_name == "openai/gpt-oss-20b":
         kwargs["reasoning_effort"] = "low"
 
-    elif model_name == "nvidia/nemotron-3.5-lightning-30b-a3b":
-        kwargs["reasoning_budget"] = 2048
-
     elif model_name == "deepseek-ai/deepseek-v4-flash-0731":
         kwargs["extra_body"] = {
             "chat_template_kwargs": {
