@@ -3,6 +3,7 @@ import time
 import os
 import argparse
 from colorama import Fore, Style, init
+from prompts.prompt import PROMPT_TEMPLATE
 
 
 from models.ollama_models import (
@@ -13,6 +14,13 @@ from models.ollama_models import (
     print_registry
 )
 from models.rule_based_parser import rule_based_parser
+from models.llm_models import (
+    CLOUD_MODELS,
+    call_cloud_model,
+    get_enabled_cloud_models,
+    get_cloud_file_tag,
+    print_cloud_registry
+)
 
 init(autoreset=True)
 
@@ -106,7 +114,14 @@ def score(predicted: list, expected: list):
 # ── Run One Model Against Full Dataset ───────────────────────────
 
 def run_model(model_key: str, dataset: list):
-    file_tag = get_file_tag(model_key)
+    # Determine if this is a cloud or local model
+    is_cloud = model_key in CLOUD_MODELS
+
+    file_tag = (
+        get_cloud_file_tag(model_key) if is_cloud
+        else get_file_tag(model_key)
+    )
+
     print(f"\n{Fore.CYAN}🤖 Running: {model_key}  ({file_tag}){Style.RESET_ALL}")
     print("-" * 55)
 
@@ -124,6 +139,12 @@ def run_model(model_key: str, dataset: list):
             latency    = round(time.time() - start, 4)
             valid      = True
             raw        = None
+
+        elif is_cloud:
+            valid, predicted, latency, raw = call_cloud_model(
+                model_key, instruction, PROMPT_TEMPLATE
+            )
+
         else:
             valid, predicted, latency, raw = call_model(
                 model_key, instruction
@@ -157,14 +178,14 @@ def run_model(model_key: str, dataset: list):
         )
 
         results.append({
-            "id":           item["id"],
-            "category":     item.get("category", ""),
-            "instruction":  instruction,
-            "expected":     expected,
-            "predicted":    predicted,
-            "validJSON":    valid,
-            "latency":      latency,
-            "raw_output":   raw,
+            "id":          item["id"],
+            "category":    item.get("category", ""),
+            "instruction": instruction,
+            "expected":    expected,
+            "predicted":   predicted,
+            "validJSON":   valid,
+            "latency":     latency,
+            "raw_output":  raw,
             **scores
         })
 
@@ -211,33 +232,27 @@ def summarize(results: list, latencies: list):
 # ── Save Results ──────────────────────────────────────────────────
 
 def save_results(model_key: str, results: list, summary: dict):
-    """
-    Files saved as:
-        Qwen2_5_Coder_1_5B_results.json
-        Qwen2_5_Coder_1_5B_summary.json
-    """
     results_dir = os.path.join(os.path.dirname(__file__), "results")
     os.makedirs(results_dir, exist_ok=True)
 
-    file_tag = get_file_tag(model_key)
-
-    # Detailed per-example results
-    results_path = os.path.join(
-        results_dir, f"{file_tag}_results.json"
+    # Get file tag from whichever registry has this model
+    is_cloud = model_key in CLOUD_MODELS
+    file_tag = (
+        get_cloud_file_tag(model_key) if is_cloud
+        else get_file_tag(model_key)
     )
+
+    results_path = os.path.join(results_dir, f"{file_tag}_results.json")
+    summary_path = os.path.join(results_dir, f"{file_tag}_summary.json")
+
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
 
-    # Summary metrics
-    summary_path = os.path.join(
-        results_dir, f"{file_tag}_summary.json"
-    )
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 
     print(f"  💾 Saved → {file_tag}_results.json")
     print(f"  💾 Saved → {file_tag}_summary.json")
-
 
 # ── Print Final Comparison Table ──────────────────────────────────
 
@@ -254,7 +269,12 @@ def print_table(all_summaries: dict):
     print("-" * 90)
 
     for model_key, s in all_summaries.items():
-        file_tag = get_file_tag(model_key)
+        # ← Check both registries
+        if model_key in CLOUD_MODELS:
+            file_tag = get_cloud_file_tag(model_key)
+        else:
+            file_tag = get_file_tag(model_key)
+
         print(
             f"{file_tag:<25} "
             f"{s['jsonValidity']:>8} "
@@ -271,7 +291,6 @@ def print_table(all_summaries: dict):
     print(f"\n{Fore.YELLOW}📂 Per Category Accuracy (fully correct steps / total){Style.RESET_ALL}")
     print("-" * 60)
 
-    # Collect all categories
     all_cats = set()
     for s in all_summaries.values():
         all_cats.update(s["byCategory"].keys())
@@ -279,62 +298,87 @@ def print_table(all_summaries: dict):
     for cat in sorted(all_cats):
         print(f"\n  {cat}:")
         for model_key, s in all_summaries.items():
-            file_tag = get_file_tag(model_key)
+            if model_key in CLOUD_MODELS:
+                file_tag = get_cloud_file_tag(model_key)
+            else:
+                file_tag = get_file_tag(model_key)
             val = s["byCategory"].get(cat, "N/A")
             print(f"    {file_tag:<30} {val}")
 
-
+            
 # ── Argument Parser ───────────────────────────────────────────────
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="SLM Parser Evaluation"
-    )
+    parser = argparse.ArgumentParser(description="SLM Parser Evaluation")
+    
     parser.add_argument(
         "--model",
         type=str,
         default=None,
-        help=(
-            "Run a specific model by key. "
-            "Options: rule_based, qwen_1_5b, qwen_3b, phi_3_5, smollm_1_7b. "
-            "If not set, runs all enabled models."
-        )
+        help="Run a specific model by key."
     )
+    
+    # ← ADD THIS
+    parser.add_argument(
+        "--cloud-only",
+        action="store_true",
+        default=False,
+        help="Run only enabled cloud models, skip local SLMs."
+    )
+
+    # ← ADD THIS
+    parser.add_argument(
+        "--slm-only",
+        action="store_true",
+        default=False,
+        help="Run only enabled local SLMs, skip cloud models."
+    )
+
     return parser.parse_args()
 
 
 # ── Main ──────────────────────────────────────────────────────────
 
 def main():
-    args          = parse_args()
-    dataset       = load_dataset()
-    all_summaries = {}
+    args    = parse_args()
+    dataset = load_dataset()
 
-    print(f"\n{Fore.YELLOW}🚀 SLM Parser Evaluation{Style.RESET_ALL}")
+    print(f"\n{Fore.YELLOW}🚀 SLM + LLM Parser Evaluation{Style.RESET_ALL}")
     print_registry()
+    print_cloud_registry()
 
-    # Decide which models to run
     if args.model:
-        # Single model mode
-        if args.model not in MODELS:
+        # Single model mode — unchanged
+        if args.model not in MODELS and args.model not in CLOUD_MODELS:
             print(f"{Fore.RED}❌ Unknown model key: '{args.model}'")
-            print(f"   Available keys: {', '.join(MODELS.keys())}{Style.RESET_ALL}")
+            print(f"   SLM keys:   {', '.join(MODELS.keys())}")
+            print(f"   Cloud keys: {', '.join(CLOUD_MODELS.keys())}{Style.RESET_ALL}")
             return
 
-        if not MODELS[args.model]["enabled"]:
-            print(f"{Fore.RED}❌ Model '{args.model}' is disabled.")
-            print(f"   Set enabled=True in ollama_models.py to use it.{Style.RESET_ALL}")
+        entry = MODELS.get(args.model) or CLOUD_MODELS.get(args.model)
+        if not entry["enabled"]:
+            print(f"{Fore.RED}❌ Model '{args.model}' is disabled.{Style.RESET_ALL}")
             return
 
         to_run = [args.model]
         print(f"  Mode    : single model → {args.model}")
-    else:
-        # All enabled models
+
+    elif args.cloud_only:
+        to_run = get_enabled_cloud_models()
+        print(f"  Mode    : cloud models only")
+
+    elif args.slm_only:
         to_run = get_enabled_models()
+        print(f"  Mode    : local SLMs only")
+
+    else:
+        to_run = get_enabled_models() + get_enabled_cloud_models()
         print(f"  Mode    : all enabled models")
 
     print(f"  Dataset : {len(dataset)} test cases")
     print(f"  Running : {', '.join(to_run)}")
+
+    all_summaries = {}
 
     for model_key in to_run:
         results, latencies       = run_model(model_key, dataset)
@@ -342,10 +386,23 @@ def main():
         all_summaries[model_key] = summary
         save_results(model_key, results, summary)
 
-    # Save combined summary
+    # NEW
     results_dir = os.path.join(os.path.dirname(__file__), "results")
-    with open(os.path.join(results_dir, "all_summaries.json"), "w") as f:
+
+    # Build filename based on what was run
+    if args.model:
+        summary_filename = f"summary_{args.model}.json"
+    elif args.cloud_only:
+        summary_filename = "summary_cloud_models.json"
+    elif args.slm_only:
+        summary_filename = "summary_slm_models.json"
+    else:
+        summary_filename = "summary_all_models.json"
+
+    with open(os.path.join(results_dir, summary_filename), "w") as f:
         json.dump(all_summaries, f, indent=2)
+
+    print(f"  💾 Combined summary → {summary_filename}")
 
     print_table(all_summaries)
     print(f"\n{Fore.GREEN}✅ Done. Results saved to results/{Style.RESET_ALL}\n")
