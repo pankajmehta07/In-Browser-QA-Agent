@@ -43,28 +43,28 @@ CLOUD_MODELS = {
         "provider":    "groq",
         "file_tag":    "Groq_GPT_OSS_20B",
         "description": "GPT-OSS 20B via Groq — fast inference",
-        "enabled":     False
+        "enabled":     True
     },
     "groq_gpt_oss_120b": {
         "name":        "openai/gpt-oss-120b",
         "provider":    "groq",
         "file_tag":    "Groq_GPT_OSS_120B",
         "description": "GPT-OSS 120B via Groq",
-        "enabled":     False
+        "enabled":     True
     },
     "groq_qwen_3_6_27b": {
         "name":        "qwen/qwen3.6-27b",
         "provider":    "groq",
         "file_tag":    "Groq_Qwen3_6_27B",
         "description": "Qwen 3.6 27B via Groq",
-        "enabled":     False
+        "enabled":     True
     },
     "groq_qwen_3_8_27b": {
         "name":        "qwen/qwen3.8-27b",
         "provider":    "groq",
         "file_tag":    "Groq_Qwen3_8_27B",
         "description": "Qwen 3.8 27B via Groq",
-        "enabled":     False
+        "enabled":     True
     },
     "groq_allam_2_7b": {
         "name":        "allam-2-7b",
@@ -252,14 +252,16 @@ def call_cloud_model(model_key: str, instruction: str, prompt_template: str):
         raise ValueError(f"Model key '{model_key}' not found in CLOUD_MODELS")
     if not entry["enabled"]:
         raise ValueError(f"Model '{model_key}' is disabled")
+    
+    time.sleep(4)
 
     prompt   = prompt_template.replace("{instruction}", instruction)
     start    = time.time()
     provider = entry["provider"]
 
+
     try:
         if provider == "gemini":
-            time.sleep(4)  
             raw = call_gemini(entry["name"], prompt)
         elif provider == "groq":
             raw = call_groq(entry["name"], prompt)
