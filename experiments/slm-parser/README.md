@@ -22,8 +22,9 @@ experiments/slm-parser/
 ├──evaluation
 │  └── evaluation.md            ← results table and findings (filled after running)
 ├── models/
+│  └── llm_models.py            ← LLM model registry, call functions, output parser
 │  └── rule_based_parser.py     ← regex baseline parser (Baseline A)
-│  └── ollama_models.py         ← model registry, call functions, output parser
+│  └── ollama_models.py         ← local model registry, call functions, output parser
 ├──prompts
 │  └── prompts.md               ← fixed prompt template used for all models
 ├── README.md        
@@ -37,6 +38,8 @@ experiments/slm-parser/
 
 ## Models Compared
 
+### Local Models (via Ollama)
+
 | Key | Model | Type |
 |---|---|---|
 | rule_based | Regex parser | Baseline — no LLM |
@@ -45,6 +48,20 @@ experiments/slm-parser/
 | phi_3_5 | phi3.5 | Stronger reasoning model |
 | smollm_1_7b | smollm2:1.7b | Lightweight fast model |
 
+### Cloud Models (via API)
+
+| Key | Model | Provider |
+|---|---|---|
+| gemini_flash_lite | gemini-3.5-flash-lite | Google Gemini |
+| gemini_flash_3_5 | gemini-3.5-flash | Google Gemini |
+| gemini_3_6_flash | gemini-3.6-flash | Google Gemini |
+| groq_gpt_oss_20b | openai/gpt-oss-20b | Groq |
+| groq_gpt_oss_120b | openai/gpt-oss-120b | Groq |
+| groq_qwen_3_8_27b | qwen/qwen3.8-27b | Groq |
+| groq_allam_2_7b | allam-2-7b | Groq |
+| nvidia_minimax_m3 | MiniMax-M3 | NVIDIA |
+| nvidia_nemotron_3_5_lightning | Nemotron-3.5 Lightning | NVIDIA |
+| nvidia_nemotron_3_super | Nemotron-3 Super | NVIDIA |
 ---
 
 ## Action Schema
@@ -110,7 +127,7 @@ source .venv/bin/activate        # Linux/Mac
 pip install -r requirements.txt
 ```
 
-### 3. Pull models via Ollama
+### 3. Pull local models via Ollama
 
 ```bash
 ollama pull qwen2.5-coder:1.5b
@@ -119,11 +136,27 @@ ollama pull phi3.5
 ollama pull smollm2:1.7b
 ```
 
-### 4. Confirm Ollama is running
+### 4. Set up API keys for cloud models
+
+Create a `.env` file in the `experiments/slm-parser/` directory:
+
+```bash
+GEMINI_API_KEY=your-gemini-key-here
+GROQ_API_KEY=your-groq-key-here
+NVIDIA_API_KEY=your-nvidia-key-here
+```
+
+Free API keys:
+- Gemini: https://aistudio.google.com/app/apikey
+- Groq: https://console.groq.com/keys
+- NVIDIA: https://build.nvidia.com
+
+### 5. Confirm Ollama is running
 
 ```bash
 ollama list
 ```
+
 
 ---
 
@@ -135,36 +168,73 @@ ollama list
 python run_evaluation.py
 ```
 
+### Run only local SLMs
+
+```bash
+python run_evaluation.py --slm-only
+```
+
+### Run only cloud models
+
+```bash
+python run_evaluation.py --cloud-only
+```
+
 ### Run a single model
 
 ```bash
+# Local models
 python run_evaluation.py --model rule_based
 python run_evaluation.py --model qwen_1_5b
 python run_evaluation.py --model qwen_3b
 python run_evaluation.py --model phi_3_5
 python run_evaluation.py --model smollm_1_7b
+
+# Groq models
+python run_evaluation.py --model groq_gpt_oss_20b
+python run_evaluation.py --model groq_gpt_oss_120b
+python run_evaluation.py --model groq_qwen_3_8_27b
+python run_evaluation.py --model groq_allam_2_7b
+
+# Gemini models
+python run_evaluation.py --model gemini_flash_lite
+python run_evaluation.py --model gemini_3_6_flash
+
+# NVIDIA models
+python run_evaluation.py --model nvidia_minimax_m3
+python run_evaluation.py --model nvidia_nemotron_3_super
+python run_evaluation.py --model nvidia_nemotron_3_5_lightning
 ```
 
 ### Enable or disable a model
 
-Open `models/ollama_models.py` and set `enabled: True` or `enabled: False`
-for any model in the `MODELS` registry. No other file needs to change.
+- For local models: open `models/ollama_models.py` and set `enabled: True/False`
+- For cloud models: open `models/llm_models.py` and set `enabled: True/False`
+
+No other file needs to change.
 
 ### Add a new model
 
-Add one entry to the `MODELS` dict in `models/ollama_models.py`:
-
+**Local model** — add to `models/ollama_models.py`:
 ```python
 "qwen_7b": {
     "name":        "qwen2.5-coder:7b",
     "file_tag":    "Qwen2_5_Coder_7B",
-    "description": "Qwen 2.5 Coder 7B — largest Qwen variant",
+    "description": "Qwen 2.5 Coder 7B",
     "enabled":     True
 }
 ```
 
-No other file needs to change.
-
+**Cloud model** — add to `models/llm_models.py`:
+```python
+"groq_new_model": {
+    "name":        "model-name-on-groq",
+    "provider":    "groq",
+    "file_tag":    "Groq_New_Model",
+    "description": "Description here",
+    "enabled":     True
+}
+```
 ---
 
 ## Output Files
@@ -175,32 +245,23 @@ All result files are saved to `results/` (git-ignored).
 |---|---|
 | `{ModelTag}_results.json` | Per-example predictions, scores, latency |
 | `{ModelTag}_summary.json` | Aggregated metrics for that model |
-| `all_summaries.json` | Combined summary across all models run |
-
-Example filenames:
-
-```
-results/
-├── rule_based_results.json
-├── rule_based_summary.json
-├── Qwen2_5_Coder_1_5B_results.json
-├── Qwen2_5_Coder_1_5B_summary.json
-├── Qwen2_5_Coder_3B_results.json
-├── Qwen2_5_Coder_3B_summary.json
-├── Phi3_5_Mini_results.json
-├── Phi3_5_Mini_summary.json
-├── SmolLM2_1_7B_results.json
-├── SmolLM2_1_7B_summary.json
-└── all_summaries.json
-```
-
-
+| `summary_all_models.json` | Combined — run without flags |
+| `summary_slm_models.json` | Combined — run with --slm-only |
+| `summary_cloud_models.json` | Combined — run with --cloud-only |
+| `summary_{model_key}.json` | Combined — run with --model flag | 
 ---
 
 ## Notes
 
 - The same prompt is used for every model — no per-model tuning
-- Models run locally via Ollama — no internet connection needed after setup
+- Models run locally via Ollama — no internet needed for local models
+- Cloud models require valid API keys in `.env`
 - Output normalization handles minor formatting differences
   (markdown fences, double braces) but does not correct semantic errors
 - Errors and wrong outputs are recorded as-is — they are research findings
+- Gemini free tier has strict rate limits — add delays between calls
+  if running the full 30-case dataset against Gemini models
+- Some models (Groq Qwen 3.6 27B, NVIDIA Kimi K2) returned 0% due to
+  format mismatch or API errors — check evaluation.md for details
+- Model output can vary between runs on shared inference infrastructure
+  (observed on Groq Qwen 3.8 27B) — rerun if results seem unexpectedly low
