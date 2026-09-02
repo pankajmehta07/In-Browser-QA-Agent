@@ -57,7 +57,7 @@ CLOUD_MODELS = {
         "provider":    "groq",
         "file_tag":    "Groq_Qwen3_6_27B",
         "description": "Qwen 3.6 27B via Groq",
-        "enabled":     True
+        "enabled":     False
     },
     "groq_qwen_3_8_27b": {
         "name":        "qwen/qwen3.8-27b",
@@ -78,7 +78,7 @@ CLOUD_MODELS = {
         "provider":    "nvidia",
         "file_tag":    "NVIDIA_DeepSeek_V4_Flash",
         "description": "DeepSeek V4 Flash via NVIDIA",
-        "enabled":     True
+        "enabled":     False
     },
     "nvidia_deepseek_v4_pro": {
         "name":        "deepseek-ai/deepseek-v4-pro-0813",
