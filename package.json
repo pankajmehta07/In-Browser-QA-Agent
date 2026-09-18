@@ -10,6 +10,10 @@
   "scripts": {
     "dev:target": "npm run dev -w apps/target-app",
     "dev:dashboard": "npm run dev -w apps/dashboard",
-    "dev:server": "npm run dev -w server"
+    "dev:server": "npm run dev -w server",
+    "dev": "concurrently \"npm run dev:target\" \"npm run dev:dashboard\" \"npm run dev:server\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }
