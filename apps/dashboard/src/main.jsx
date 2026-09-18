@@ -180,6 +180,18 @@ function App() {
     }
   }
 
+  async function deleteSavedTest(testId) {
+    try {
+      await fetch(`http://127.0.0.1:4000/tests/${testId}`, {
+        method: "DELETE",
+      });
+
+      await loadTests();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   async function runInstruction() {
     setIsRunning(true);
     setResult(null);
@@ -201,6 +213,36 @@ function App() {
         status: "failed",
         errorMessage: error.message,
         steps: [],
+      });
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  async function runTestSuite() {
+    setIsRunning(true);
+    setResult(null);
+
+    try {
+      const response = await fetch("http://127.0.0.1:4000/run-test-suite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          variant,
+          reruns,
+        }),
+      });
+
+      const data = await response.json();
+      setResult(data);
+      await loadRuns();
+    } catch (error) {
+      setResult({
+        status: "failed",
+        errorMessage: error.message,
+        tests: [],
       });
     } finally {
       setIsRunning(false);
@@ -234,6 +276,15 @@ function App() {
                   disabled={isRunning}
                 >
                   {isRunning ? "Running..." : "Generate and Run"}
+                </button>
+
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={runTestSuite}
+                  disabled={isRunning}
+                >
+                  Run Saved Suite
                 </button>
               </div>
             </div>
@@ -396,6 +447,34 @@ function App() {
                   </section>
                 )}
 
+                {result.type === "suite" && result.tests && (
+                  <section className="suite-box">
+                    <h3>Suite Summary</h3>
+
+                    <div className="suite-stats">
+                      <span>Total: {result.testCount}</span>
+                      <span>Passed: {result.passedCount}</span>
+                      <span>Failed: {result.failedCount}</span>
+                      <span>Flaky: {result.flakyCount}</span>
+                    </div>
+
+                    <div className="step-list">
+                      {result.tests.map((test) => (
+                        <article className="step-item" key={test.id}>
+                          <div className="step-main">
+                            <strong>{test.name}</strong>
+                            <p>{test.durationMs}ms</p>
+                          </div>
+
+                          <span className={`pill ${test.status}`}>
+                            {test.status}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 {result.steps && (
                   <>
                     <h3>Execution Log</h3>
@@ -543,7 +622,7 @@ function App() {
               </div>
             )}
           </section>
-          
+
           <section className="panel saved-tests-panel">
             <div className="panel-heading">
               <h2>Saved Tests</h2>
@@ -566,9 +645,19 @@ function App() {
                       </p>
                     </div>
 
-                    <button type="button" onClick={() => runSavedTest(test)}>
-                      Run
-                    </button>
+                    <div className="saved-test-actions">
+                      <button type="button" onClick={() => runSavedTest(test)}>
+                        Run
+                      </button>
+
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => deleteSavedTest(test.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>
