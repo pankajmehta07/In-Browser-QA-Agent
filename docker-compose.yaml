@@ -1,0 +1,75 @@
+
+services:
+  target-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    working_dir: /app/apps/target-app
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    ports:
+      - "5173:5173"
+    restart: unless-stopped
+    networks:
+      - qa-network
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    working_dir: /app/apps/dashboard
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
+    ports:
+      - "5174:5174"
+    restart: unless-stopped
+    networks:
+      - qa-network
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      TARGET_APP_URL: http://target-app:5173
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-qa_agent}
+      DB_USER: ${POSTGRES_USER:-qa_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./server/data:/app/server/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - qa-network
+
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-qa_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-qa_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - qa-network
+
+volumes:
+  postgres_data:
+
+networks:
+  qa-network:
+    driver: bridge

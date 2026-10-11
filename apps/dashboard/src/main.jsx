@@ -56,9 +56,11 @@ function App() {
     loadTests();
   }, []);
 
+  const API_BASE_URL = "/api";
+
   async function loadRuns() {
     try {
-      const response = await fetch("http://127.0.0.1:4000/runs");
+      const response = await fetch("${API_BASE_URL}/runs");
       const data = await response.json();
       setRuns(data);
     } catch (error) {
@@ -68,7 +70,7 @@ function App() {
 
   async function loadTests() {
     try {
-      const response = await fetch("http://127.0.0.1:4000/tests");
+      const response = await fetch("${API_BASE_URL}/tests");
       const data = await response.json();
       setTests(data);
     } catch (error) {
@@ -78,7 +80,7 @@ function App() {
 
   async function loadRunDetail(runId) {
     try {
-      const response = await fetch(`http://127.0.0.1:4000/runs/${runId}`);
+      const response = await fetch(`${API_BASE_URL}/runs/${runId}`);
       const data = await response.json();
       setSelectedRun(data);
     } catch (error) {
@@ -91,7 +93,7 @@ function App() {
       return;
     }
 
-    const response = await fetch("http://127.0.0.1:4000/approvals", {
+    const response = await fetch("${API_BASE_URL}/approvals", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -127,7 +129,7 @@ function App() {
   }
 
   async function saveCurrentTest() {
-    const response = await fetch("http://127.0.0.1:4000/tests", {
+    const response = await fetch("${API_BASE_URL}/tests", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -154,7 +156,7 @@ function App() {
     setResult(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:4000/run-instruction", {
+      const response = await fetch("${API_BASE_URL}/run-instruction", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -182,7 +184,7 @@ function App() {
 
   async function deleteSavedTest(testId) {
     try {
-      await fetch(`http://127.0.0.1:4000/tests/${testId}`, {
+      await fetch(`${API_BASE_URL}/tests/${testId}`, {
         method: "DELETE",
       });
 
@@ -197,7 +199,7 @@ function App() {
     setResult(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:4000/run-instruction", {
+      const response = await fetch("${API_BASE_URL}/run-instruction", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -224,7 +226,7 @@ function App() {
     setResult(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:4000/run-test-suite", {
+      const response = await fetch("${API_BASE_URL}/run-test-suite", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -374,7 +376,7 @@ function App() {
                   <section className="screenshot-box">
                     <h3>Failure Screenshot</h3>
                     <img
-                      src={`http://127.0.0.1:4000${result.screenshot.urlPath}`}
+                      src={`${API_BASE_URL}${result.screenshot.urlPath}`}
                       alt="Failure screenshot"
                     />
                   </section>
@@ -694,7 +696,7 @@ function App() {
                   <section className="screenshot-box">
                     <h3>Failure Screenshot</h3>
                     <img
-                      src={`http://127.0.0.1:4000${selectedRun.result.screenshot.urlPath}`}
+                      src={`${API_BASE_URL}${selectedRun.result.screenshot.urlPath}`}
                       alt="Saved failure screenshot"
                     />
                   </section>
