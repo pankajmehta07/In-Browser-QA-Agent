@@ -1,0 +1,24 @@
+{
+  "name": "In-Browser QA Agent",
+  "dockerComposeFile": [
+    "../docker-compose.yaml",
+    "docker-compose.devcontainer.yaml"
+  ],
+  "service": "server",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [4000, 5173, 5174],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "editor.formatOnSave": true
+      }
+    }
+  }
+}
