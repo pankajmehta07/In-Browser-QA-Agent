@@ -3,33 +3,22 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace:cached
-      - target_node_modules:/workspace/node_modules
-    command:
-      - sh
-      - -lc
-      - npm ci && npm --prefix /workspace/apps/target-app run dev -- --host 0.0.0.0 --port 5173
+      - workspace_node_modules:/workspace/node_modules
+    command: [ "npm", "run", "dev:target" ]
 
   dashboard:
     working_dir: /workspace
     volumes:
       - .:/workspace:cached
-      - dashboard_node_modules:/workspace/node_modules
-    command:
-      - sh
-      - -lc
-      - npm ci && npm --prefix /workspace/apps/dashboard run dev -- --host 0.0.0.0 --port 5174
+      - workspace_node_modules:/workspace/node_modules
+    command: [ "npm", "run", "dev:dashboard" ]
 
   server:
     working_dir: /workspace
     volumes:
       - .:/workspace:cached
-      - server_node_modules:/workspace/node_modules
-    command:
-      - sh
-      - -lc
-      - npm ci && exec sleep infinity
+      - workspace_node_modules:/workspace/node_modules
+    command: [ "npm", "run", "dev:server" ]
 
 volumes:
-  target_node_modules:
-  dashboard_node_modules:
-  server_node_modules:
+  workspace_node_modules:
