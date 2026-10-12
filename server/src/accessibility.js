@@ -28,6 +28,18 @@ export async function extractAccessibilitySnapshot(page) {
             return "button";
           }
 
+          if (inputType === "checkbox") {
+            return "checkbox";
+          }
+
+          if (inputType === "radio") {
+            return "radio";
+          }
+
+          if (inputType === "range") {
+            return "slider";
+          }
+
           return "textbox";
         }
 
@@ -69,6 +81,14 @@ export async function extractAccessibilitySnapshot(page) {
           if (label) {
             return safeText(label.innerText || label.textContent);
           }
+        }
+
+        const wrappingLabel = element.closest("label");
+
+        if (wrappingLabel) {
+          return safeText(
+            wrappingLabel.innerText || wrappingLabel.textContent,
+          );
         }
 
         return safeText(element.innerText || element.textContent);

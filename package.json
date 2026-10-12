@@ -10,6 +10,7 @@
   "scripts": {
     "dev:target": "npm run dev -w apps/target-app",
     "dev:dashboard": "npm run dev -w apps/dashboard",
-    "dev:server": "npm run dev -w server"
+    "dev:server": "npm run dev -w server",
+    "test": "npm test -w server"
   }
 }

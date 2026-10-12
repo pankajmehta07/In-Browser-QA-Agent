@@ -71,6 +71,7 @@ Natural-language instruction
 ## Current Features
 
 - Constrained natural-language test instructions
+- Validated 20-action instruction schema
 - Rule-based English-to-JSON parser
 - Playwright browser execution
 - Accessibility snapshot extraction
@@ -145,9 +146,10 @@ http://127.0.0.1:5173
 It currently includes:
 
 - Login page
-- Dashboard page
-- Settings page
-- Email field
+- Dashboard, Projects, Users, Billing, Settings, and Profile pages
+- QA Playground for form, keyboard, pointer, and state testing
+- Text inputs, textareas, selects, checkboxes, enabled and disabled controls
+- Modal forms, transient notices, search, and editable profile fields
 - DOM variant selector
 - Flaky behavior variant
 
@@ -307,12 +309,52 @@ Check that Email contains user@example.com.
 
 Supported sentence patterns:
 
+| Category | Pattern | Example |
+|---|---|---|
+| Navigation | `Go to ...` | `Go to QA Playground.` |
+| Input | `Type ... into ...` | `Type Smoke test into Scenario Name.` |
+| Input | `Clear ...` | `Clear Scenario Name.` |
+| Pointer | `Click ...` | `Click Add User.` |
+| Pointer | `Double click ...` | `Double click Increment counter.` |
+| Selection | `Select ... from ...` | `Select Critical from Priority.` |
+| Checkbox | `Check ...` | `Check Requires approval.` |
+| Checkbox | `Uncheck ...` | `Uncheck Weekly digest.` |
+| Keyboard | `Press ... in ...` | `Press Enter in Search users.` |
+| Pointer | `Hover over ...` | `Hover over Hover target.` |
+| Synchronization | `Wait for ...` | `Wait for Hover detected.` |
+| Assertion | `Check that ... is visible` | `Check that Dashboard is visible.` |
+| Assertion | `Check that ... is hidden` | `Check that Missing panel is hidden.` |
+| Assertion | `Check that ... contains ...` | `Check that Email contains user@example.com.` |
+| Assertion | `Check that ... has text ...` | `Check that Counter value has text 2.` |
+| Assertion | `Check that ... equals ...` | `Check that Job Title equals QA Lead.` |
+| Assertion | `Check that ... is enabled` | `Check that Save Profile is enabled.` |
+| Assertion | `Check that ... is disabled` | `Check that Archive scenario is disabled.` |
+| Assertion | `Check that ... is checked` | `Check that Email reports is checked.` |
+| Assertion | `Check that ... is unchecked` | `Check that Weekly digest is unchecked.` |
+
+Every parsed step is checked against the action schema before Playwright is
+started. Unsupported actions and missing fields therefore fail early instead
+of reaching browser execution.
+
+### Expanded Playground Scenario
+
 ```text
-Go to ...
-Type ... into ...
-Click ...
-Check that ... is visible.
-Check that ... contains ...
+Go to Login.
+Type user@example.com into Email.
+Type password123 into Password.
+Click Login.
+Go to QA Playground.
+Clear Scenario Name.
+Type Checkout regression into Scenario Name.
+Select Critical from Priority.
+Check Requires approval.
+Check that Requires approval is checked.
+Type Validate the checkout flow into Test Notes.
+Hover over Hover target.
+Wait for Hover detected.
+Double click Increment counter.
+Check that Counter value has text 2.
+Check that Archive scenario is disabled.
 ```
 
 Generated test steps are represented as JSON objects such as:

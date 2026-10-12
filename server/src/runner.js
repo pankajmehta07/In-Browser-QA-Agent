@@ -41,11 +41,11 @@ export async function runHardcodedLoginTest() {
     });
 
     await runStep(steps, "Type email", async () => {
-      await page.getByLabel("Email").fill("user@example.com");
+      await page.getByLabel("Email", { exact: true }).fill("user@example.com");
     });
 
     await runStep(steps, "Type password", async () => {
-      await page.getByLabel("Password").fill("password123");
+      await page.getByLabel("Password", { exact: true }).fill("password123");
     });
 
     await runStep(steps, "Click Login", async () => {
@@ -64,7 +64,9 @@ export async function runHardcodedLoginTest() {
       steps,
       "Check email field contains user@example.com",
       async () => {
-        await expect(page.getByLabel("Email")).toHaveValue("user@example.com");
+        await expect(
+          page.getByLabel("Email", { exact: true }),
+        ).toHaveValue("user@example.com");
       },
     );
 
@@ -163,7 +165,10 @@ async function executeStructuredStep(page, steps, step) {
         return;
       }
 
-      throw new Error(`Unknown page target: ${step.target}`);
+      await page.getByRole("button", { name: step.target, exact: true }).click();
+      await expect(
+        page.getByRole("heading", { name: step.target, exact: true }).first(),
+      ).toBeVisible();
     });
 
     return;
@@ -171,7 +176,15 @@ async function executeStructuredStep(page, steps, step) {
 
   if (step.action === "type") {
     await runStep(steps, `Type into ${step.target}`, async () => {
-      await page.getByLabel(step.target).fill(step.value);
+      await (await findTarget(page, step.target)).fill(step.value);
+    });
+
+    return;
+  }
+
+  if (step.action === "clear") {
+    await runStep(steps, `Clear ${step.target}`, async () => {
+      await (await findTarget(page, step.target)).clear();
     });
 
     return;
@@ -182,9 +195,73 @@ async function executeStructuredStep(page, steps, step) {
     return;
   }
 
+  if (step.action === "double_click") {
+    await runStep(steps, `Double click ${step.target}`, async () => {
+      await (await findTarget(page, step.target)).dblclick();
+    });
+
+    return;
+  }
+
+  if (step.action === "select") {
+    await runStep(steps, `Select ${step.value} from ${step.target}`, async () => {
+      await (await findTarget(page, step.target)).selectOption({ label: step.value });
+    });
+
+    return;
+  }
+
+  if (step.action === "check" || step.action === "uncheck") {
+    const verb = step.action === "check" ? "Check" : "Uncheck";
+
+    await runStep(steps, `${verb} ${step.target}`, async () => {
+      const locator = await findTarget(page, step.target);
+
+      if (step.action === "check") {
+        await locator.check();
+      } else {
+        await locator.uncheck();
+      }
+    });
+
+    return;
+  }
+
+  if (step.action === "press") {
+    await runStep(steps, `Press ${step.value} in ${step.target}`, async () => {
+      await (await findTarget(page, step.target)).press(step.value);
+    });
+
+    return;
+  }
+
+  if (step.action === "hover") {
+    await runStep(steps, `Hover over ${step.target}`, async () => {
+      await (await findTarget(page, step.target)).hover();
+    });
+
+    return;
+  }
+
+  if (step.action === "wait_for") {
+    await runStep(steps, `Wait for ${step.target}`, async () => {
+      await (await findTarget(page, step.target)).waitFor({ state: "visible" });
+    });
+
+    return;
+  }
+
   if (step.action === "check_visible") {
     await runStep(steps, `Check ${step.target} is visible`, async () => {
-      await expect(page.getByText(step.target)).toBeVisible();
+      await expect(await findTarget(page, step.target)).toBeVisible();
+    });
+
+    return;
+  }
+
+  if (step.action === "check_hidden") {
+    await runStep(steps, `Check ${step.target} is hidden`, async () => {
+      await expect(await findTarget(page, step.target, { allowMissing: true })).toBeHidden();
     });
 
     return;
@@ -195,14 +272,87 @@ async function executeStructuredStep(page, steps, step) {
       steps,
       `Check ${step.target} contains ${step.value}`,
       async () => {
-        await expect(page.getByLabel(step.target)).toHaveValue(step.value);
+        const locator = await findTarget(page, step.target);
+        const isFormControl = await locator.evaluate((element) =>
+          ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName),
+        );
+
+        if (isFormControl) {
+          await expect(locator).toHaveValue(new RegExp(escapeRegExp(step.value)));
+        } else {
+          await expect(locator).toContainText(step.value);
+        }
       },
     );
 
     return;
   }
 
+  if (step.action === "check_text") {
+    await runStep(steps, `Check ${step.target} has text ${step.value}`, async () => {
+      await expect(await findTarget(page, step.target)).toHaveText(step.value);
+    });
+
+    return;
+  }
+
+  if (step.action === "check_value") {
+    await runStep(steps, `Check ${step.target} equals ${step.value}`, async () => {
+      await expect(await findTarget(page, step.target)).toHaveValue(step.value);
+    });
+
+    return;
+  }
+
+  const stateMatchers = {
+    check_enabled: ["enabled", (locator) => expect(locator).toBeEnabled()],
+    check_disabled: ["disabled", (locator) => expect(locator).toBeDisabled()],
+    check_checked: ["checked", (locator) => expect(locator).toBeChecked()],
+    check_unchecked: ["unchecked", (locator) => expect(locator).not.toBeChecked()],
+  };
+
+  if (stateMatchers[step.action]) {
+    const [state, assertion] = stateMatchers[step.action];
+    await runStep(steps, `Check ${step.target} is ${state}`, async () => {
+      await assertion(await findTarget(page, step.target));
+    });
+
+    return;
+  }
+
   throw new Error(`Unsupported action: ${step.action}`);
+}
+
+async function findTarget(page, target, options = {}) {
+  const candidates = [
+    page.getByLabel(target, { exact: true }),
+    page.getByRole("heading", { name: target, exact: true }),
+    page.getByRole("textbox", { name: target, exact: true }),
+    page.getByRole("combobox", { name: target, exact: true }),
+    page.getByRole("checkbox", { name: target, exact: true }),
+    page.getByRole("radio", { name: target, exact: true }),
+    page.getByRole("button", { name: target, exact: true }),
+    page.getByRole("link", { name: target, exact: true }),
+    page.getByPlaceholder(target, { exact: true }),
+    page.getByText(target, { exact: true }),
+    page.getByText(target, { exact: false }),
+  ];
+
+  for (const candidate of candidates) {
+    if ((await candidate.count()) > 0) {
+      return candidate.first();
+    }
+  }
+
+  if (options.allowMissing) {
+    return page.getByText(target, { exact: true }).first();
+  }
+
+  throw new Error(`Unable to find target "${target}"`);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function runStep(steps, name, action) {
