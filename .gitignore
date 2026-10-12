@@ -15,6 +15,7 @@ server/data/screenshots/
 
 playwright-report
 test-results
+output/
 
 server/data/*.json
 
