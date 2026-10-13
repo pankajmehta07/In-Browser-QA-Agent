@@ -124,7 +124,7 @@ function App() {
 
   async function loadRuns() {
     try {
-      const response = await fetch("${API_BASE_URL}/runs");
+      const response = await fetch(`${API_BASE_URL}/runs`);
       const data = await response.json();
       setRuns(data);
     } catch (error) {
@@ -135,7 +135,7 @@ function App() {
 
   async function loadTests() {
     try {
-      const response = await fetch("${API_BASE_URL}/tests");
+      const response = await fetch(`${API_BASE_URL}/tests`);
       const data = await response.json();
       setTests(data);
     } catch (error) {
@@ -159,7 +159,7 @@ function App() {
       return;
     }
 
-    const response = await fetch("${API_BASE_URL}/approvals", {
+    const response = await fetch(`${API_BASE_URL}/approvals`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -195,7 +195,7 @@ function App() {
   }
 
   async function saveCurrentTest() {
-    const response = await fetch("${API_BASE_URL}/tests", {
+    const response = await fetch(`${API_BASE_URL}/tests`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -256,7 +256,7 @@ function App() {
     setResult(null);
 
     try {
-      const response = await fetch("${API_BASE_URL}/run-instruction", {
+      const response = await fetch(`${API_BASE_URL}/run-instruction`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -299,7 +299,7 @@ function App() {
     setResult(null);
 
     try {
-      const response = await fetch("${API_BASE_URL}/run-instruction", {
+      const response = await fetch(`${API_BASE_URL}/run-instruction`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -332,7 +332,7 @@ function App() {
   async function confirmDeleteTest() {
     if (!pendingDelete) return;
     try {
-      const response = await fetch("${API_BASE_URL}/run-test-suite", {
+      const response = await fetch(`${API_BASE_URL}/run-test-suite`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -578,22 +578,22 @@ function App() {
                       ...result.accessibilityAudit.issues,
                       ...result.accessibilityAudit.warnings,
                     ].length > 0 && (
-                      <div className="audit-list">
-                        {[
-                          ...result.accessibilityAudit.issues,
-                          ...result.accessibilityAudit.warnings,
-                        ].map((item, index) => (
-                          <article
-                            className="audit-item"
-                            key={`${item.rule}-${index}`}
-                          >
-                            <strong>{item.rule}</strong>
-                            <p>{item.message}</p>
-                            <code>{item.selector}</code>
-                          </article>
-                        ))}
-                      </div>
-                    )}
+                        <div className="audit-list">
+                          {[
+                            ...result.accessibilityAudit.issues,
+                            ...result.accessibilityAudit.warnings,
+                          ].map((item, index) => (
+                            <article
+                              className="audit-item"
+                              key={`${item.rule}-${index}`}
+                            >
+                              <strong>{item.rule}</strong>
+                              <p>{item.message}</p>
+                              <code>{item.selector}</code>
+                            </article>
+                          ))}
+                        </div>
+                      )}
                   </section>
                 )}
 
@@ -700,7 +700,7 @@ function App() {
                                 {approvalDecisions[getApprovalKey(step)] ? (
                                   <span className="approval-message">
                                     {approvalDecisions[getApprovalKey(step)] ===
-                                    "approved"
+                                      "approved"
                                       ? "Approved for future memory"
                                       : "Rejected"}
                                   </span>
@@ -947,9 +947,8 @@ function App() {
               <div className="history-list">
                 {runs.slice(0, 10).map((run) => (
                   <article
-                    className={`history-item ${
-                      selectedRun?.id === run.id ? "selected-history-item" : ""
-                    }`}
+                    className={`history-item ${selectedRun?.id === run.id ? "selected-history-item" : ""
+                      }`}
                     key={run.id}
                     onClick={() => loadRunDetail(run.id)}
                   >

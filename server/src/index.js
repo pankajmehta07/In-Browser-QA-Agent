@@ -419,9 +419,8 @@ app.post("/run-test-suite", async (request, response) => {
   }
 });
 
-// Start accepting HTTP requests only after every route has been registered.
-app.listen(port, () => {
-  console.log(`QA Agent server running at http://127.0.0.1:${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`QA Agent server running at http://localhost:${port}`);
 });
 
 // ---------------------------------------------------------------------------
