@@ -9,6 +9,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from core.browser import launch_browser, navigate_to, close_browser, take_screenshot
 from utils.logger import log_step, log_success, log_error, console
 
+from extractors.page_content import extract_page_content
+from utils.printer import print_page_content
+
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
     """
@@ -38,6 +41,31 @@ async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
             await take_screenshot(session.page, "output/screenshot.png")
 
         console.rule("[success]Browser check passed[/success]")
+
+    finally:
+        await close_browser(session)
+
+
+async def cmd_extract_content(url: str, headless: bool):
+    """
+    Step 2: Extract and display full page content.
+    """
+    session = await launch_browser(headless=headless)
+
+    try:
+        success = await navigate_to(session.page, url)
+
+        if not success:
+            log_error("Navigation failed. Exiting.")
+            return
+
+        content = await extract_page_content(session.page)
+
+        if not content:
+            log_error("Content extraction failed.")
+            return
+
+        print_page_content(content)
 
     finally:
         await close_browser(session)
@@ -73,6 +101,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run browser in headful mode (visible window)",
     )
 
+    # --- extract-content command ---
+    content_parser = subparsers.add_parser(
+        "extract-content",
+        help="Step 2: Extract full page content — title, meta, headings, links, buttons, images, forms",
+    )
+    content_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to extract content from",
+    )
+    content_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+
     return parser
 
 
@@ -87,6 +132,11 @@ def main():
             headless=not args.headful,
         ))
 
+    if args.command == "extract-content":
+        asyncio.run(cmd_extract_content(
+            url=args.url,
+            headless=not args.headful,
+        ))
 
 if __name__ == "__main__":
     main()
