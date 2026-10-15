@@ -107,7 +107,7 @@ async def extract_page_content(page: Page) -> PageContent | None:
 # ─── private helpers ──────────────────────────────────────────────────────────
 
 async def _extract_meta(page: Page) -> MetaInfo:
-    return await page.evaluate("""
+    raw = await page.evaluate("""
         () => {
             function getMeta(name) {
                 const el = document.querySelector(
@@ -123,6 +123,8 @@ async def _extract_meta(page: Page) -> MetaInfo:
             };
         }
     """)
+
+    return MetaInfo(**raw)
 
 
 async def _extract_headings(page: Page) -> list[Heading]:

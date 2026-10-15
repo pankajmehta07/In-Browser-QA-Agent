@@ -11,8 +11,9 @@ from utils.logger import log_step, log_success, log_error, console
 
 from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
+from core.auditor import run_full_audit
 
-from utils.printer import print_page_content, print_accessibility_snapshot
+from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
     """
@@ -97,6 +98,15 @@ async def cmd_extract_accessibility(url: str, headless: bool):
         await close_browser(session)
 
 
+async def cmd_audit(url: str, screenshot: bool, headless: bool):
+    """
+    Full audit — runs Steps 1, 2, 3 sequentially
+    and prints step-wise + combined report.
+    """
+    report = await run_full_audit(url=url, screenshot = screenshot, headless=headless)
+    print_audit_report(report)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qa-cli",
@@ -144,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run browser in headful mode",
     )
 
-        # --- extract-accessibility command ---
+    # --- extract-accessibility command ---
     a11y_parser = subparsers.add_parser(
         "extract-accessibility",
         help="Step 3: Extract accessibility tree for all interactive elements",
@@ -156,6 +166,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="URL to extract accessibility tree from",
     )
     a11y_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+
+    # --- audit command ---
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Full audit — runs Steps 1, 2, 3 and prints combined report",
+    )
+    audit_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to audit",
+    )
+    audit_parser.add_argument(
+        "--screenshot",
+        action="store_true",
+        help="Save a screenshot to output/audit_screenshot.png",
+    )
+    audit_parser.add_argument(
         "--headful",
         action="store_true",
         help="Run browser in headful mode",
@@ -184,6 +216,13 @@ def main():
     if args.command == "extract-accessibility":
         asyncio.run(cmd_extract_accessibility(
             url=args.url,
+            headless=not args.headful,
+        ))
+
+    if args.command == "audit":
+        asyncio.run(cmd_audit(
+            url=args.url,
+            screenshot=args.screenshot,
             headless=not args.headful,
         ))
 

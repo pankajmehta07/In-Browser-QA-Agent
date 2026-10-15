@@ -6,6 +6,7 @@ from rich import box
 from utils.logger import console
 from extractors.page_content import PageContent
 from extractors.accessibility import AccessibilitySnapshot
+from core.auditor import AuditReport, StepResult
 
 def print_page_content(content: PageContent):
     """
@@ -35,7 +36,7 @@ def _print_overview(content: PageContent):
 
 def _print_meta(content: PageContent):
     m = content.meta
-    if not any([m.get("description"), m.get("keywords"), m.get("author"), m.get("viewport")]):
+    if not any([m.description, m.keywords, m.author, m.viewport]):
         console.print("[dim]Meta — none found[/dim]\n")
         return
 
@@ -44,7 +45,7 @@ def _print_meta(content: PageContent):
     table.add_column("Value", style="white")
 
     for key in ["description", "keywords", "author", "viewport"]:
-        value = m.get(key)
+        value = getattr(m, key, None)
         if value:
             table.add_row(key, value)
 
@@ -152,7 +153,7 @@ def _print_forms(content: PageContent):
             )
 
         console.print(table)
-        
+
 
 def print_accessibility_snapshot(snapshot: AccessibilitySnapshot):
     """
@@ -241,3 +242,83 @@ def _print_accessibility_issues(snapshot: AccessibilitySnapshot):
         table.add_row(str(index), issue)
 
     console.print(table)
+
+def print_audit_report(report: AuditReport):
+    """
+    Print the full audit report — step results + content + accessibility + combined summary.
+    """
+    console.rule("[bold cyan]FULL PAGE AUDIT REPORT[/bold cyan]")
+
+    _print_step_results(report)
+
+    if report.content:
+        print_page_content(report.content)
+
+    if report.accessibility:
+        print_accessibility_snapshot(report.accessibility)
+
+    # combined summary
+    _print_combined_summary(report)
+
+
+def _print_step_results(report: AuditReport):
+    table = Table(title="Step Results", box=box.SIMPLE)
+    table.add_column("Step",     style="cyan",  width=6)
+    table.add_column("Name",     style="white")
+    table.add_column("Status",   width=8)
+    table.add_column("Duration", style="dim", justify="right", width=10)
+    table.add_column("Error",    style="red",   max_width=40)
+
+    for step in report.steps:
+        status_str = (
+            "[green]passed[/green]" if step.status == "passed"
+            else "[red]failed[/red]"
+        )
+        table.add_row(
+            str(step.step),
+            step.name,
+            status_str,
+            f"{step.duration_ms}ms",
+            step.error or "-",
+        )
+
+    console.print(table)
+
+
+def _print_combined_summary(report: AuditReport):
+    console.rule("[bold]Combined Summary[/bold]")
+
+    # health score panel
+    score = report.health_score
+    score_color = (
+        "green"  if score >= 80 else
+        "yellow" if score >= 50 else
+        "red"
+    )
+
+    breakdown = report.health_breakdown
+    console.print(Panel(
+        f"[bold {score_color}]Health Score: {score}/100[/bold {score_color}]\n\n"
+        f"  Navigation:      {breakdown.get('navigation', 0)}/20\n"
+        f"  Content:         {breakdown.get('content', 0)}/30\n"
+        f"  Accessibility:   {breakdown.get('accessibility', 0)}/50\n\n"
+        f"  Screenshot:      {report.screenshot_path or 'none'}\n"
+        f"  Status:          {report.status}",
+        title="Audit Summary",
+        border_style=score_color,
+    ))
+
+    # all issues combined
+    if report.all_issues:
+        table = Table(title=f"All Issues ({len(report.all_issues)})", box=box.SIMPLE)
+        table.add_column("#",     style="dim", width=4)
+        table.add_column("Issue", style="red")
+
+        for index, issue in enumerate(report.all_issues, start=1):
+            table.add_row(str(index), issue)
+
+        console.print(table)
+    else:
+        console.print("[success]✓ No issues found across all steps[/success]")
+
+    console.rule("[bold cyan]END OF REPORT[/bold cyan]")
