@@ -10,8 +10,9 @@ from core.browser import launch_browser, navigate_to, close_browser, take_screen
 from utils.logger import log_step, log_success, log_error, console
 
 from extractors.page_content import extract_page_content
-from utils.printer import print_page_content
+from extractors.accessibility import extract_accessibility_tree
 
+from utils.printer import print_page_content, print_accessibility_snapshot
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
     """
@@ -71,6 +72,31 @@ async def cmd_extract_content(url: str, headless: bool):
         await close_browser(session)
 
 
+async def cmd_extract_accessibility(url: str, headless: bool):
+    """
+    Step 3: Extract and display accessibility tree.
+    """
+    session = await launch_browser(headless=headless)
+
+    try:
+        success = await navigate_to(session.page, url)
+
+        if not success:
+            log_error("Navigation failed. Exiting.")
+            return
+
+        snapshot = await extract_accessibility_tree(session.page)
+
+        if not snapshot:
+            log_error("Accessibility extraction failed.")
+            return
+
+        print_accessibility_snapshot(snapshot)
+
+    finally:
+        await close_browser(session)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qa-cli",
@@ -118,6 +144,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run browser in headful mode",
     )
 
+        # --- extract-accessibility command ---
+    a11y_parser = subparsers.add_parser(
+        "extract-accessibility",
+        help="Step 3: Extract accessibility tree for all interactive elements",
+    )
+    a11y_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to extract accessibility tree from",
+    )
+    a11y_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+
     return parser
 
 
@@ -134,6 +177,12 @@ def main():
 
     if args.command == "extract-content":
         asyncio.run(cmd_extract_content(
+            url=args.url,
+            headless=not args.headful,
+        ))
+
+    if args.command == "extract-accessibility":
+        asyncio.run(cmd_extract_accessibility(
             url=args.url,
             headless=not args.headful,
         ))

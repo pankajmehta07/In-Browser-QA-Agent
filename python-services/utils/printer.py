@@ -5,7 +5,7 @@ from rich import box
 
 from utils.logger import console
 from extractors.page_content import PageContent
-
+from extractors.accessibility import AccessibilitySnapshot
 
 def print_page_content(content: PageContent):
     """
@@ -152,3 +152,92 @@ def _print_forms(content: PageContent):
             )
 
         console.print(table)
+        
+
+def print_accessibility_snapshot(snapshot: AccessibilitySnapshot):
+    """
+    Print full accessibility tree to terminal.
+    """
+    console.rule("[step]Step 3 — Accessibility Tree[/step]")
+
+    _print_accessibility_summary(snapshot)
+    _print_accessibility_nodes(snapshot)
+    _print_accessibility_issues(snapshot)
+
+    console.rule("[success]Accessibility extraction complete[/success]")
+
+
+def _print_accessibility_summary(snapshot: AccessibilitySnapshot):
+    table = Table(title="Summary", box=box.SIMPLE)
+    table.add_column("Role",  style="cyan")
+    table.add_column("Count", style="white", justify="right")
+
+    for role, count in sorted(snapshot.by_role.items()):
+        table.add_row(role, str(count))
+
+    table.add_row("[bold]Total[/bold]", f"[bold]{snapshot.total_count}[/bold]")
+    console.print(table)
+
+
+def _print_accessibility_nodes(snapshot: AccessibilitySnapshot):
+    if not snapshot.nodes:
+        console.print("[dim]No nodes found[/dim]\n")
+        return
+
+    table = Table(
+        title=f"Interactive Elements ({snapshot.total_count})",
+        box=box.SIMPLE,
+        show_lines=True,
+    )
+    table.add_column("Role",      style="cyan",   width=10)
+    table.add_column("Name",      style="white",  max_width=25)
+    table.add_column("Selector",  style="yellow", max_width=25)
+    table.add_column("Visible",   width=7)
+    table.add_column("Focusable", width=9)
+    table.add_column("Disabled",  width=9)
+    table.add_column("ARIA",      style="dim",    max_width=30)
+
+    for node in snapshot.nodes:
+        # build compact aria summary
+        aria_parts = []
+        if node.aria.label:
+            aria_parts.append(f"label={node.aria.label[:15]}")
+        if node.aria.expanded is not None:
+            aria_parts.append(f"expanded={node.aria.expanded}")
+        if node.aria.required:
+            aria_parts.append("required")
+        if node.aria.hidden:
+            aria_parts.append("hidden")
+        if node.aria.haspopup:
+            aria_parts.append(f"popup={node.aria.haspopup}")
+        aria_str = ", ".join(aria_parts) or "-"
+
+        table.add_row(
+            node.role,
+            node.name or "[unnamed]",
+            node.selector,
+            "[green]yes[/green]" if node.visible  else "[red]no[/red]",
+            "[green]yes[/green]" if node.focusable else "[red]no[/red]",
+            "[red]yes[/red]"     if node.disabled  else "no",
+            aria_str,
+        )
+
+    console.print(table)
+
+
+def _print_accessibility_issues(snapshot: AccessibilitySnapshot):
+    if not snapshot.issues:
+        console.print("[success]✓ No accessibility issues detected[/success]\n")
+        return
+
+    table = Table(
+        title=f"Issues ({len(snapshot.issues)})",
+        box=box.SIMPLE,
+    )
+    table.add_column("#",       style="dim",  width=4)
+    table.add_column("Issue",   style="red")
+
+    for index, issue in enumerate(snapshot.issues, start=1):
+        table.add_row(str(index), issue)
+
+    console.print(table)
