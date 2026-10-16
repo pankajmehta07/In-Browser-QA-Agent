@@ -14,6 +14,8 @@ from extractors.accessibility import extract_accessibility_tree
 from core.auditor import run_full_audit
 
 from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report
+from utils.serializer import serialize_report
+from utils.file_writer import generate_filename, save_report_to_file
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
     """
@@ -40,7 +42,7 @@ async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
         if screenshot:
             log_step(3, "Taking screenshot")
             os.makedirs("output", exist_ok=True)
-            await take_screenshot(session.page, "output/screenshot.png")
+            await take_screenshot(session.page, "output/screenshots/screenshot.png")
 
         console.rule("[success]Browser check passed[/success]")
 
@@ -98,13 +100,19 @@ async def cmd_extract_accessibility(url: str, headless: bool):
         await close_browser(session)
 
 
-async def cmd_audit(url: str, screenshot: bool, headless: bool):
+async def cmd_audit(url: str, screenshot: bool, headless: bool, save:bool):
     """
     Full audit — runs Steps 1, 2, 3 sequentially
     and prints step-wise + combined report.
+    Optionally saves JSON report with --save.
     """
     report = await run_full_audit(url=url, screenshot = screenshot, headless=headless)
     print_audit_report(report)
+
+    if save:
+        filepath = generate_filename(url)
+        data     = serialize_report(report)
+        save_report_to_file(data, filepath)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -129,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     browser_parser.add_argument(
         "--screenshot",
         action="store_true",
-        help="Save a screenshot to output/screenshot.png",
+        help="Save a screenshot to output/screenshots/screenshot.png",
     )
     browser_parser.add_argument(
         "--headful",
@@ -185,12 +193,17 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser.add_argument(
         "--screenshot",
         action="store_true",
-        help="Save a screenshot to output/audit_screenshot.png",
+        help="Save a screenshot to output/screenshots/audit_screenshot.png",
     )
     audit_parser.add_argument(
         "--headful",
         action="store_true",
         help="Run browser in headful mode",
+    )
+    audit_parser.add_argument(
+        "--save",
+        action="store_true",
+        help="Save audit report to output/auditFiles/audit_<slug>_<timestamp>.json",
     )
 
     return parser
@@ -224,6 +237,7 @@ def main():
             url=args.url,
             screenshot=args.screenshot,
             headless=not args.headful,
+            save=args.save,
         ))
 
 if __name__ == "__main__":

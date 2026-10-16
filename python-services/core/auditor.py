@@ -76,7 +76,7 @@ async def run_full_audit(url: str, screenshot: bool = False, headless: bool = Tr
 
             import os
             os.makedirs("output", exist_ok=True)
-            screenshot_path = "output/audit_screenshot.png"
+            screenshot_path = "output/screenshots/audit_screenshot.png"
             await take_screenshot(session.page, screenshot_path)
             report.screenshot_path = screenshot_path
 
