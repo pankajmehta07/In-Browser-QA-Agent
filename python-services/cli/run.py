@@ -7,15 +7,18 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.browser import launch_browser, navigate_to, close_browser, take_screenshot
-from utils.logger import log_step, log_success, log_error, console
+from core.auditor import run_full_audit
 
 from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
-from core.auditor import run_full_audit
 
-from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report
+from parser.llm_output_parser import parse_llm_output
+
+from utils.logger import log_step, log_success, log_error, console
+from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
+
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
     """
@@ -114,6 +117,27 @@ async def cmd_audit(url: str, screenshot: bool, headless: bool, save:bool):
         data     = serialize_report(report)
         save_report_to_file(data, filepath)
 
+async def cmd_parse_llm(input_file: str | None, raw: str | None):
+    """
+    Parse LLM output from a file or raw string.
+    Useful for testing the parser before wiring it to Playwright.
+    """
+    if input_file:
+        try:
+            with open(input_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            log_error(f"File not found: {input_file}")
+            return
+    elif raw:
+        content = raw
+    else:
+        log_error("Provide either --file or --raw")
+        return
+
+    result = parse_llm_output(content)
+    print_parse_result(result)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -206,6 +230,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save audit report to output/auditFiles/audit_<slug>_<timestamp>.json",
     )
 
+    # --- parse-llm command ---
+    parse_parser = subparsers.add_parser(
+        "parse-llm",
+        help="Parse LLM JSON output into structured steps",
+    )
+    parse_group = parse_parser.add_mutually_exclusive_group(required=True)
+    parse_group.add_argument(
+        "--file",
+        type=str,
+        help="Path to file containing LLM output",
+    )
+    parse_group.add_argument(
+        "--raw",
+        type=str,
+        help="Raw LLM output string passed directly",
+    )
+
     return parser
 
 
@@ -238,6 +279,12 @@ def main():
             screenshot=args.screenshot,
             headless=not args.headful,
             save=args.save,
+        ))
+
+    if args.command == "parse-llm":
+        asyncio.run(cmd_parse_llm(
+            input_file=getattr(args, "file", None),
+            raw=getattr(args, "raw", None),
         ))
 
 if __name__ == "__main__":

@@ -6,7 +6,8 @@ from rich import box
 from utils.logger import console
 from extractors.page_content import PageContent
 from extractors.accessibility import AccessibilitySnapshot
-from core.auditor import AuditReport, StepResult
+from core.auditor import AuditReport
+from parser.models import ParseResult
 
 def print_page_content(content: PageContent):
     """
@@ -322,3 +323,57 @@ def _print_combined_summary(report: AuditReport):
         console.print("[success]✓ No issues found across all steps[/success]")
 
     console.rule("[bold cyan]END OF REPORT[/bold cyan]")
+
+def print_parse_result(result: ParseResult):
+    """
+    Print parse result to terminal.
+    """
+    console.rule("[step]LLM Output Parser[/step]")
+
+    _print_parse_summary(result)
+
+    if result.steps:
+        _print_parsed_steps(result)
+
+    console.rule(
+        "[success]Parse complete[/success]" if result.success
+        else "[error]Parse failed[/error]"
+    )
+
+
+def _print_parse_summary(result: ParseResult):
+    recovery_str = result.recovery or "none"
+    status_str = (
+        "[green]success[/green]" if result.success
+        else "[red]failed[/red]"
+    )
+
+    console.print(Panel(
+        f"[bold]Status:[/bold]    {status_str}\n"
+        f"[bold]Recovery:[/bold]  {recovery_str}\n"
+        f"[bold]Steps:[/bold]     {len(result.steps)}\n"
+        + (f"[bold]Error:[/bold]     [red]{result.error}[/red]" if result.error else ""),
+        title="Parse Summary",
+        border_style="cyan",
+    ))
+
+
+def _print_parsed_steps(result: ParseResult):
+    table = Table(
+        title=f"Parsed Steps ({len(result.steps)})",
+        box=box.SIMPLE,
+    )
+    table.add_column("#",       style="dim",    width=4)
+    table.add_column("Action",  style="cyan",   width=15)
+    table.add_column("Target",  style="white",  max_width=30)
+    table.add_column("Value",   style="yellow", max_width=30)
+
+    for index, step in enumerate(result.steps, start=1):
+        table.add_row(
+            str(index),
+            step.action,
+            step.target,
+            step.value or "-",
+        )
+
+    console.print(table)
