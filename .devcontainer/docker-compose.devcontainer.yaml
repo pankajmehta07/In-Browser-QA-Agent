@@ -20,5 +20,11 @@ services:
       - workspace_node_modules:/workspace/node_modules
     command: [ "npm", "run", "dev:server" ]
 
+  python-services:
+    working_dir: /workspace/python-services
+    volumes:
+      - ./python-services:/workspace/python-services:cached
+    command: ["sleep", "infinity"]
+
 volumes:
   workspace_node_modules:

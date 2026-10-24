@@ -66,6 +66,18 @@ services:
     restart: unless-stopped
     networks:
       - qa-network
+    
+  python-services:
+    build:
+      context: ./python-services
+      dockerfile: Dockerfile
+    working_dir: /workspace/python-services
+    volumes:
+      - ./python-services:/workspace/python-services
+    environment:
+      TARGET_APP_URL: http://target-app:5173
+    networks:
+      - qa-network
 
 volumes:
   postgres_data:
