@@ -90,3 +90,33 @@ CREATE INDEX IF NOT EXISTS idx_runs_started_at
 
 CREATE INDEX IF NOT EXISTS idx_runs_result_json
     ON runs USING GIN (result_json);
+
+
+-- ------------------------------------------------------------
+-- healed_selectors
+-- Stores confirmed healing decisions approved by the user.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS healed_selectors (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    saved_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    run_id          UUID REFERENCES runs(id) ON DELETE SET NULL,
+    step_name       TEXT NOT NULL,
+    old_selector    TEXT,
+    new_selector    TEXT,
+    old_target      TEXT NOT NULL,
+    new_target      TEXT NOT NULL,
+    decision        TEXT NOT NULL
+                        CHECK (decision IN ('approved', 'rejected')),
+    confidence      NUMERIC(4, 3),
+    strategy        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_healed_selectors_old_target
+    ON healed_selectors (old_target)
+    WHERE decision = 'approved';
+
+CREATE INDEX IF NOT EXISTS idx_healed_selectors_saved_at
+    ON healed_selectors (saved_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_healed_selectors_run_id
+    ON healed_selectors (run_id);
