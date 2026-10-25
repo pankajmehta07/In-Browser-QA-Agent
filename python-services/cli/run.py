@@ -13,9 +13,10 @@ from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
 
 from parser.llm_output_parser import parse_llm_output
+from parser.step_runner import run_steps
 
 from utils.logger import log_step, log_success, log_error, console
-from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result
+from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
 
@@ -139,6 +140,50 @@ async def cmd_parse_llm(input_file: str | None, raw: str | None):
     print_parse_result(result)
 
 
+async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headless: bool):
+    """
+    Parse LLM output then execute the steps against a live page.
+    """
+    # get raw input
+    if input_file:
+        try:
+            with open(input_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            log_error(f"File not found: {input_file}")
+            return
+    elif raw:
+        content = raw
+    else:
+        log_error("Provide either --file or --raw")
+        return
+
+    # parse
+    parse_result = parse_llm_output(content)
+    print_parse_result(parse_result)
+
+    if not parse_result.success or not parse_result.steps:
+        log_error("No valid steps to run.")
+        return
+
+    # launch browser and navigate
+    session = await launch_browser(headless=headless)
+
+    try:
+        success = await navigate_to(session.page, url)
+
+        if not success:
+            log_error("Navigation failed. Exiting.")
+            return
+
+        # run steps
+        result = await run_steps(session.page, parse_result.steps)
+        print_run_result(result)
+
+    finally:
+        await close_browser(session)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qa-cli",
@@ -247,6 +292,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Raw LLM output string passed directly",
     )
 
+    # --- run-steps command ---
+    run_parser = subparsers.add_parser(
+        "run-steps",
+        help="Parse LLM output and execute steps against a live page",
+    )
+    run_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to run steps against",
+    )
+    run_input = run_parser.add_mutually_exclusive_group(required=True)
+    run_input.add_argument(
+        "--raw",
+        type=str,
+        help="Raw LLM output string",
+    )
+    run_input.add_argument(
+        "--file",
+        type=str,
+        help="Path to file containing LLM output",
+    )
+    run_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+
     return parser
 
 
@@ -285,6 +358,14 @@ def main():
         asyncio.run(cmd_parse_llm(
             input_file=getattr(args, "file", None),
             raw=getattr(args, "raw", None),
+        ))
+
+    if args.command == "run-steps":
+        asyncio.run(cmd_run_steps(
+            url=args.url,
+            raw=getattr(args, "raw", None),
+            input_file=getattr(args, "file", None),
+            headless=not args.headful,
         ))
 
 if __name__ == "__main__":

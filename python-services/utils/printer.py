@@ -7,7 +7,7 @@ from utils.logger import console
 from extractors.page_content import PageContent
 from extractors.accessibility import AccessibilitySnapshot
 from core.auditor import AuditReport
-from parser.models import ParseResult
+from parser.models import ParseResult, RunResult
 
 def print_page_content(content: PageContent):
     """
@@ -374,6 +374,74 @@ def _print_parsed_steps(result: ParseResult):
             step.action,
             step.target,
             step.value or "-",
+        )
+
+    console.print(table)
+    
+
+def print_run_result(result: RunResult):
+    """
+    Print step execution results to terminal.
+    """
+    console.rule("[step]Step Runner Results[/step]")
+
+    _print_run_summary(result)
+    _print_step_results(result)
+
+    console.rule(
+        "[success]Run passed[/success]" if result.status == "passed"
+        else "[error]Run failed[/error]"
+    )
+
+
+def _print_run_summary(result: RunResult):
+    status_str = (
+        "[green]passed[/green]" if result.status == "passed"
+        else "[red]failed[/red]"
+    )
+    console.print(Panel(
+        f"[bold]Status:[/bold]   {status_str}\n"
+        f"[bold]Steps:[/bold]    {result.passed_steps} passed, "
+        f"{result.failed_steps} failed / {result.total_steps} total\n"
+        f"[bold]Duration:[/bold] {result.duration_ms}ms",
+        title="Run Summary",
+        border_style="green" if result.status == "passed" else "red",
+    ))
+
+
+def _print_step_results(result: RunResult):
+    table = Table(
+        title=f"Steps ({result.total_steps})",
+        box=box.SIMPLE,
+        show_lines=True,
+    )
+    table.add_column("#",        style="dim",    width=4)
+    table.add_column("Action",   style="cyan",   width=14)
+    table.add_column("Target",   style="white",  max_width=20)
+    table.add_column("Value",    style="dim",    max_width=20)
+    table.add_column("Status",   width=8)
+    table.add_column("Duration", style="dim",    width=10, justify="right")
+    table.add_column("Selector", style="yellow", max_width=25)
+    table.add_column("Error",    style="red",    max_width=30)
+
+    for step in result.steps:
+        status_str = (
+            "[green]passed[/green]" if step.status == "passed"
+            else "[red]failed[/red]"
+        )
+        healed_str = ""
+        if step.was_healed:
+            healed_str = " [yellow](healed)[/yellow]"
+
+        table.add_row(
+            str(step.step_number),
+            step.action,
+            step.target,
+            step.value or "-",
+            status_str,
+            f"{step.duration_ms}ms",
+            (step.selector_used or "-") + healed_str,
+            step.error or "-",
         )
 
     console.print(table)
