@@ -348,10 +348,14 @@ docker compose up -d --build python-services
 docker compose exec python-services python cli/run.py
 ```
 
-With no arguments, the CLI prompts for one natural-language instruction at a
-time using `>>> `. If an instruction includes an `http://` or `https://` URL,
-that URL is tested; otherwise it uses `TARGET_APP_URL` (the Compose default is
-`http://target-app:5173`). Press Ctrl-C or Ctrl-D to quit.
+With no arguments, the CLI prompts for one natural-language message at a
+time using `>>> `. Questions about the page get a concise, page-grounded answer;
+test instructions generate and run supported browser steps. If a message
+includes an `http://` or `https://` URL, that URL is used; otherwise the CLI
+uses `TARGET_APP_URL` (the Compose default is `http://target-app:5173`). Press
+Ctrl-C or Ctrl-D to quit. The browser page and recent conversation stay active
+throughout the REPL session; instructions without a new URL continue on the
+current page.
 For a single instruction instead, use:
 
 ```sh
