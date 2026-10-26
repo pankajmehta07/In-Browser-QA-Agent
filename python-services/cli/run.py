@@ -2,6 +2,8 @@ import asyncio
 import argparse
 import sys
 import os
+import re
+from urllib.parse import urlsplit
 
 # make sure imports work from project root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -13,12 +15,26 @@ from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
 
 from parser.llm_output_parser import parse_llm_output
+from parser.natural_language import generate_steps_from_instruction
 from parser.step_runner import run_steps
 
 from utils.logger import log_step, log_success, log_error, console
 from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result, print_root_cause
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
+
+
+def extract_instruction_url(instruction: str) -> str | None:
+    match = re.search(r"https?://[^\s<>\"]+", instruction, re.IGNORECASE)
+    if not match:
+        return None
+
+    candidate = match.group(0).rstrip(".,;:!?)]}'\"`")
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    return candidate
 
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
@@ -187,6 +203,93 @@ async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headl
         await close_browser(session)
 
 
+async def cmd_run_natural_language(
+    url: str,
+    instruction: str,
+    headless: bool,
+    dry_run: bool,
+):
+    """Use Groq to plan supported QA steps, then optionally execute them."""
+    if not os.getenv("GROQ_API_KEY"):
+        log_error("GROQ_API_KEY is not set. Add it to .env and recreate the service.")
+        return
+
+    session = await launch_browser(headless=headless)
+
+    try:
+        if not await navigate_to(session.page, url):
+            log_error("Navigation failed. Exiting.")
+            return
+
+        snapshot = await extract_accessibility_tree(session.page)
+        if not snapshot:
+            log_error("Could not extract page context for Groq.")
+            return
+
+        try:
+            generated_steps = await generate_steps_from_instruction(instruction, snapshot)
+        except Exception as error:
+            log_error(f"Groq planning failed: {error}")
+            return
+
+        parse_result = parse_llm_output(generated_steps)
+        print_parse_result(parse_result)
+
+        if not parse_result.success or not parse_result.steps or parse_result.error:
+            log_error("No complete, valid QA plan was generated. Nothing was run.")
+            return
+
+        if dry_run:
+            log_success("Dry run complete. No browser actions were executed.")
+            return
+
+        run_result, root_cause = await run_steps(session.page, parse_result.steps)
+        print_run_result(run_result)
+
+        if root_cause:
+            print_root_cause(root_cause)
+
+    finally:
+        await close_browser(session)
+
+
+def run_interactive(url: str):
+    """Read natural-language instructions until interrupted or input ends."""
+    console.rule("[step]Natural-Language QA CLI[/step]")
+    console.print(f"Target URL: {url}")
+    console.print("Enter a QA instruction. Press Ctrl-C or Ctrl-D to quit.")
+
+    while True:
+        try:
+            instruction = input(">>> ").strip()
+        except EOFError:
+            console.print("\n[dim]End of input. Exiting.[/dim]")
+            return
+        except KeyboardInterrupt:
+            console.print("\n[dim]Interrupted. Exiting.[/dim]")
+            return
+
+        if not instruction:
+            continue
+
+        instruction_url = extract_instruction_url(instruction)
+        target_url = instruction_url or url
+        console.print(f"Testing URL: {target_url}")
+
+        try:
+            asyncio.run(cmd_run_natural_language(
+                url=target_url,
+                instruction=instruction,
+                headless=True,
+                dry_run=False,
+            ))
+        except KeyboardInterrupt:
+            console.print("\n[dim]Interrupted. Exiting.[/dim]")
+            return
+        except Exception as error:
+            log_error(f"Instruction failed: {error}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qa-cli",
@@ -323,11 +426,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run browser in headful mode",
     )
 
+    # --- run-natural-language command ---
+    natural_parser = subparsers.add_parser(
+        "run-natural-language",
+        help="Use Groq to plan and run QA steps from a natural-language instruction",
+    )
+    natural_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to inspect and run steps against",
+    )
+    natural_parser.add_argument(
+        "--instruction",
+        type=str,
+        required=True,
+        help="Natural-language QA instruction",
+    )
+    natural_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+    natural_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the generated plan without executing browser actions",
+    )
+
     return parser
 
 
 def main():
     parser = build_parser()
+    if len(sys.argv) == 1:
+        run_interactive(os.getenv("TARGET_APP_URL", "http://127.0.0.1:5173"))
+        return
+
     args = parser.parse_args()
 
     if args.command == "check-browser":
@@ -369,6 +504,14 @@ def main():
             raw=getattr(args, "raw", None),
             input_file=getattr(args, "file", None),
             headless=not args.headful,
+        ))
+
+    if args.command == "run-natural-language":
+        asyncio.run(cmd_run_natural_language(
+            url=args.url,
+            instruction=args.instruction,
+            headless=not args.headful,
+            dry_run=args.dry_run,
         ))
 
 if __name__ == "__main__":

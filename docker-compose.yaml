@@ -77,6 +77,8 @@ services:
       - ./python-services:/workspace/python-services
     environment:
       TARGET_APP_URL: http://target-app:5173
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
     networks:
       - qa-network
 
