@@ -2,3 +2,5 @@ playwright==1.63.0
 asyncio==4.0.0
 rich==15.0.0
 groq==0.31.0
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3

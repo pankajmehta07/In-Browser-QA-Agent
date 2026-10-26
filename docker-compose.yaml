@@ -79,6 +79,11 @@ services:
       TARGET_APP_URL: http://target-app:5173
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${POSTGRES_DB:-qa_agent}
+      DB_USER: ${POSTGRES_USER:-qa_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-}
     networks:
       - qa-network
 
