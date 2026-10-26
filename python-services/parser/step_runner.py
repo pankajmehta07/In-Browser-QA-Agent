@@ -4,6 +4,8 @@ from playwright.async_api import Page, expect
 from parser.models import ParsedStep, StepExecutionResult, RunResult
 from utils.logger import log_info, log_success, log_error, log_warning
 
+from core.root_cause import explain_failure, RootCause
+
 
 # known URL targets for goto action
 # extend this dict as more pages are added
@@ -14,13 +16,24 @@ GOTO_TARGETS: dict[str, str] = {
 }
 
 
+class _UnresolvedElementError(Exception):
+    """
+    Raised when all resolution tiers fail to find an element.
+    Carries the target name so _execute_step can mark
+    resolution_strategy as 'unresolved' on the result.
+    """
+    def __init__(self, target: str, message: str):
+        super().__init__(message)
+        self.target = target
+
+
 async def run_steps(
     page: Page,
     steps: list[ParsedStep],
-) -> RunResult:
+) -> tuple[RunResult, RootCause | None]:
     """
     Execute a list of ParsedStep objects against a loaded Playwright page.
-    Continues on failure — collects all results before returning.
+    Returns (RunResult, RootCause | None).
     """
     log_info(f"Running {len(steps)} steps...")
 
@@ -38,8 +51,8 @@ async def run_steps(
             log_error(f"  Step {index} failed — {result.error}")
 
     total_ms = int((time.time() - overall_start) * 1000)
-    passed  = [r for r in results if r.status == "passed"]
-    failed  = [r for r in results if r.status == "failed"]
+    passed   = [r for r in results if r.status == "passed"]
+    failed   = [r for r in results if r.status == "failed"]
 
     overall_status = "passed" if not failed else "failed"
 
@@ -48,7 +61,7 @@ async def run_steps(
     else:
         log_error(f"{len(failed)} of {len(steps)} steps failed ({total_ms}ms)")
 
-    return RunResult(
+    run_result = RunResult(
         status=overall_status,
         total_steps=len(steps),
         passed_steps=len(passed),
@@ -56,6 +69,10 @@ async def run_steps(
         duration_ms=total_ms,
         steps=results,
     )
+
+    root_cause = explain_failure(run_result)
+
+    return run_result, root_cause
 
 
 # ── private: route each action ─────────────────────────────────────────────────
@@ -95,6 +112,23 @@ async def _execute_step(
             status="passed",
             duration_ms=duration_ms,
             **extra,
+        )
+
+    except _UnresolvedElementError as error:
+        # element not found after all tiers 
+        duration_ms = int((time.time() - start) * 1000)
+        return StepExecutionResult(
+            step_number=step_number,
+            action=step.action,
+            target=step.target,
+            value=step.value,
+            status="failed",
+            duration_ms=duration_ms,
+            error=str(error),
+            resolution_strategy="unresolved",
+            confidence=0.0,
+            old_selector=f'role=button[name="{step.target}"]',
+            new_selector=None,
         )
 
     except Exception as error:
@@ -146,9 +180,9 @@ async def _action_click(page: Page, target: str) -> dict:
     Click a button by name.
     """
     # tier 1 — exact match
-    locator = page.get_by_role("button", name=target)
 
     try:
+        locator = page.get_by_role("button", name=target)
         await locator.wait_for(state="visible", timeout=3000)
         await locator.click()
 
@@ -166,9 +200,9 @@ async def _action_click(page: Page, target: str) -> dict:
         pass
 
     # tier 2 — try link role (covers <a> elements)
-    link_locator = page.get_by_role("link", name=target)
 
     try:
+        link_locator = page.get_by_role("link", name=target)
         await link_locator.wait_for(state="visible", timeout=3000)
         await link_locator.click()
 
@@ -186,8 +220,9 @@ async def _action_click(page: Page, target: str) -> dict:
         pass
 
     # unresolved
-    raise Exception(
-        f'Could not find button or link with name "{target}". '
+    raise _UnresolvedElementError(
+        target=target,
+        message=f'Could not find button or link with name "{target}". '
     )
 
 

@@ -16,7 +16,7 @@ from parser.llm_output_parser import parse_llm_output
 from parser.step_runner import run_steps
 
 from utils.logger import log_step, log_success, log_error, console
-from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result
+from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result, print_root_cause
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
 
@@ -177,8 +177,11 @@ async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headl
             return
 
         # run steps
-        result = await run_steps(session.page, parse_result.steps)
-        print_run_result(result)
+        run_result, root_cause = await run_steps(session.page, parse_result.steps)
+        print_run_result(run_result)
+
+        if root_cause:
+            print_root_cause(root_cause)
 
     finally:
         await close_browser(session)

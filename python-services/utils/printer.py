@@ -7,6 +7,7 @@ from utils.logger import console
 from extractors.page_content import PageContent
 from extractors.accessibility import AccessibilitySnapshot
 from core.auditor import AuditReport
+from core.root_cause import RootCause
 from parser.models import ParseResult, RunResult
 
 def print_page_content(content: PageContent):
@@ -445,3 +446,21 @@ def _print_step_results(result: RunResult):
         )
 
     console.print(table)
+
+
+def print_root_cause(root_cause: RootCause):
+    """
+    Print root cause analysis to terminal.
+    """
+    console.print(Panel(
+        f"[bold]Title:[/bold]           {root_cause.title}\n"
+        f"[bold]Summary:[/bold]         {root_cause.summary}\n"
+        f"[bold]Likely Cause:[/bold]    {root_cause.likely_cause}\n"
+        f"[bold]Recommendation:[/bold]  {root_cause.recommendation}\n"
+        + (
+            f"[bold]Evidence:[/bold]        [dim]{root_cause.evidence}[/dim]"
+            if root_cause.evidence else ""
+        ),
+        title="[red]Root Cause Analysis[/red]",
+        border_style="red",
+    ))
