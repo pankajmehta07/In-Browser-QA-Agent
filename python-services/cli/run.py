@@ -18,10 +18,12 @@ from parser.llm_output_parser import parse_llm_output
 from parser.natural_language import respond_to_instruction
 from parser.step_runner import run_steps
 
-from utils.logger import log_step, log_success, log_error, console
-from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result, print_root_cause
+from utils.logger import log_step, log_success, log_error, log_info, console
+from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result, print_root_cause, print_classified_result
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
+
+from helpers.classify_reruns import classify_reruns
 
 
 def extract_instruction_url(instruction: str) -> str | None:
@@ -156,9 +158,10 @@ async def cmd_parse_llm(input_file: str | None, raw: str | None):
     print_parse_result(result)
 
 
-async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headless: bool):
+async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headless: bool, reruns: int):
     """
     Parse LLM output then execute the steps against a live page.
+    Supports multiple reruns for flaky detection.
     """
     # get raw input
     if input_file:
@@ -186,18 +189,43 @@ async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headl
     session = await launch_browser(headless=headless)
 
     try:
-        success = await navigate_to(session.page, url)
+        all_results = []
 
-        if not success:
-            log_error("Navigation failed. Exiting.")
+        for i in range(reruns):
+            if reruns > 1:
+                log_info(f"Run {i + 1} of {reruns}...")
+
+            # navigate fresh each run
+            success = await navigate_to(session.page, url)
+            if not success:
+                log_error(f"Navigation failed on run {i + 1}.")
+                break
+
+            run_result, root_cause = await run_steps(
+                session.page,
+                parse_result.steps,
+            )
+            all_results.append((run_result, root_cause))
+
+            # print individual run result only when doing multiple reruns
+            if reruns > 1:
+                print_run_result(run_result)
+
+        if not all_results:
+            log_error("No runs completed.")
             return
 
-        # run steps
-        run_result, root_cause = await run_steps(session.page, parse_result.steps)
-        print_run_result(run_result)
+        # single run — print normally
+        if reruns == 1:
+            run_result, root_cause = all_results[0]
+            print_run_result(run_result)
+            if root_cause:
+                print_root_cause(root_cause)
+            return
 
-        if root_cause:
-            print_root_cause(root_cause)
+        # multiple reruns — classify and print
+        classified = classify_reruns(all_results)
+        print_classified_result(classified)
 
     finally:
         await close_browser(session)
@@ -480,6 +508,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run browser in headful mode",
     )
+    run_parser.add_argument(
+        "--reruns",
+        type=int,
+        default=1,
+        help="Number of times to run the steps (default: 1, max: 5)",
+    )
 
     # --- run-natural-language command ---
     natural_parser = subparsers.add_parser(
@@ -559,6 +593,7 @@ def main():
             raw=getattr(args, "raw", None),
             input_file=getattr(args, "file", None),
             headless=not args.headful,
+            reruns=min(max(1, args.reruns), 5),
         ))
 
     if args.command == "run-natural-language":

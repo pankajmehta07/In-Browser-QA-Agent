@@ -9,6 +9,7 @@ from extractors.accessibility import AccessibilitySnapshot
 from core.auditor import AuditReport
 from core.root_cause import RootCause
 from parser.models import ParseResult, RunResult
+from helpers.classify_reruns import ClassifiedResult
 
 def print_page_content(content: PageContent):
     """
@@ -464,3 +465,70 @@ def print_root_cause(root_cause: RootCause):
         title="[red]Root Cause Analysis[/red]",
         border_style="red",
     ))
+
+
+def print_classified_result(result: ClassifiedResult):
+    """
+    Print the classified rerun result to terminal.
+    """
+    console.rule("[step]Rerun Classification[/step]")
+
+    _print_classification_summary(result)
+    _print_rerun_breakdown(result)
+
+    if result.root_cause:
+        print_root_cause(result.root_cause)
+
+    console.rule(
+        "[green]passed[/green]"   if result.status == "passed"  else
+        "[yellow]flaky[/yellow]"  if result.status == "flaky"   else
+        "[red]failed[/red]"
+    )
+
+
+def _print_classification_summary(result: ClassifiedResult):
+    status_color = (
+        "green"  if result.status == "passed" else
+        "yellow" if result.status == "flaky"  else
+        "red"
+    )
+    flaky_str = "[yellow]yes[/yellow]" if result.flaky else "no"
+
+    console.print(Panel(
+        f"[bold]Status:[/bold]      [{status_color}]{result.status}[/{status_color}]\n"
+        f"[bold]Flaky:[/bold]       {flaky_str}\n"
+        f"[bold]Runs:[/bold]        {result.passed_runs} passed, "
+        f"{result.failed_runs} failed / {result.total_runs} total\n"
+        f"[bold]Total time:[/bold]  {result.duration_ms}ms",
+        title="Classification Summary",
+        border_style=status_color,
+    ))
+
+
+def _print_rerun_breakdown(result: ClassifiedResult):
+    if result.total_runs <= 1:
+        return
+
+    table = Table(
+        title=f"Per-run Breakdown ({result.total_runs} runs)",
+        box=box.SIMPLE,
+    )
+    table.add_column("Run",      style="dim",   width=6)
+    table.add_column("Status",   width=8)
+    table.add_column("Steps",    style="white", width=20)
+    table.add_column("Duration", style="dim",   width=10, justify="right")
+
+    for index, run in enumerate(result.runs, start=1):
+        status_str = (
+            "[green]passed[/green]" if run.status == "passed"
+            else "[red]failed[/red]"
+        )
+        steps_str = f"{run.passed_steps} passed, {run.failed_steps} failed"
+        table.add_row(
+            str(index),
+            status_str,
+            steps_str,
+            f"{run.duration_ms}ms",
+        )
+
+    console.print(table)
