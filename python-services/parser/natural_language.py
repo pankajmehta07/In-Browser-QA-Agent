@@ -116,3 +116,69 @@ async def respond_to_instruction(
         )
 
     raise ValueError('Groq response must have kind "answer" or "test" with valid fields.')
+
+
+async def resolve_button_with_llm(
+    target_name: str,
+    candidates: list[str],
+) -> str | None:
+    """
+    Ask Groq to identify which visible button best matches target_name.
+    Used by resolver.py Tier 4.
+    Returns the exact button name from candidates or None.
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not set.")
+
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
+    if not candidates:
+        return None
+
+    prompt = (
+        f'A UI test is trying to click a button named: "{target_name}"\n\n'
+        f"These buttons are currently visible on the page:\n"
+        f"{json.dumps(candidates, indent=2)}\n\n"
+        f'Which button name from the list is the most likely match '
+        f'for "{target_name}"?\n'
+        f"Reply with ONLY the exact button name from the list above.\n"
+        f"If nothing matches, reply with: NO_MATCH"
+    )
+
+    async with AsyncGroq(api_key=api_key) as client:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a UI test assistant. "
+                        "You identify which visible button on a page "
+                        "matches a given target name. "
+                        "Reply with only the exact button name from "
+                        "the provided list, or NO_MATCH."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0,
+            max_tokens=300,
+            reasoning_effort="low",
+        )
+
+    answer = (response.choices[0].message.content or "").strip().strip('"').strip("'")
+    
+    if not answer or answer.upper() == "NO_MATCH":
+        return None
+
+    # guard against hallucination — only accept if in candidates list
+    match = next(
+        (c for c in candidates if c.strip().lower() == answer.strip().lower()),
+        None,
+    )
+
+    return match

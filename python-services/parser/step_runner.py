@@ -5,6 +5,7 @@ from parser.models import ParsedStep, StepExecutionResult, RunResult
 from utils.logger import log_info, log_success, log_error, log_warning
 
 from core.root_cause import explain_failure, RootCause
+from core.resolver import resolve_button, ResolutionResult
 
 
 # known URL targets for goto action
@@ -177,53 +178,35 @@ async def _action_type(page: Page, target: str, value: str) -> dict:
 
 async def _action_click(page: Page, target: str) -> dict:
     """
-    Click a button by name.
+    Click a button using the full resolver pipeline.
+    Tier 1 — exact match
+    Tier 2 — approved memory
+    Tier 3 — similarity
+    Tier 4 — LLM stub
     """
-    # tier 1 — exact match
+    resolution = await resolve_button(page, target)
 
-    try:
-        locator = page.get_by_role("button", name=target)
-        await locator.wait_for(state="visible", timeout=3000)
-        await locator.click()
+    if not resolution.resolved_name:
+        raise _UnresolvedElementError(
+            target=target,
+            message=(
+                f'Could not resolve button "{target}" '
+                f'after {len(resolution.attempts)} tier(s). '
+                f'Strategy: {resolution.resolution_strategy}.'
+            ),
+        )
 
-        selector = f'role=button[name="{target}"]'
-        return {
-            "selector_used":        selector,
-            "was_healed":           False,
-            "old_selector":         None,
-            "new_selector":         selector,
-            "resolution_strategy":  "exact_role_match",
-            "confidence":           1.0,
-        }
+    locator = page.get_by_role("button", name=resolution.resolved_name)
+    await locator.click()
 
-    except Exception:
-        pass
-
-    # tier 2 — try link role (covers <a> elements)
-
-    try:
-        link_locator = page.get_by_role("link", name=target)
-        await link_locator.wait_for(state="visible", timeout=3000)
-        await link_locator.click()
-
-        selector = f'role=link[name="{target}"]'
-        return {
-            "selector_used":        selector,
-            "was_healed":           False,
-            "old_selector":         None,
-            "new_selector":         selector,
-            "resolution_strategy":  "exact_role_match",
-            "confidence":           1.0,
-        }
-
-    except Exception:
-        pass
-
-    # unresolved
-    raise _UnresolvedElementError(
-        target=target,
-        message=f'Could not find button or link with name "{target}". '
-    )
+    return {
+        "selector_used":       resolution.new_selector,
+        "was_healed":          resolution.was_healed,
+        "old_selector":        resolution.old_selector,
+        "new_selector":        resolution.new_selector,
+        "resolution_strategy": resolution.resolution_strategy,
+        "confidence":          resolution.confidence,
+    }
 
 
 async def _action_check_visible(page: Page, target: str) -> dict:
