@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from core.browser import launch_browser, navigate_to, close_browser, take_screenshot
 from core.auditor import run_full_audit
+from core.runner import run_test, TestRunReport
 
 from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
@@ -158,11 +159,13 @@ async def cmd_parse_llm(input_file: str | None, raw: str | None):
     print_parse_result(result)
 
 
-async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headless: bool, reruns: int):
-    """
-    Parse LLM output then execute the steps against a live page.
-    Supports multiple reruns for flaky detection.
-    """
+async def cmd_run_steps(
+    url: str,
+    raw: str | None,
+    input_file: str | None,
+    headless: bool,
+    reruns: int,
+):
     # get raw input
     if input_file:
         try:
@@ -185,50 +188,26 @@ async def cmd_run_steps(url: str, raw: str | None, input_file: str | None, headl
         log_error("No valid steps to run.")
         return
 
-    # launch browser and navigate
-    session = await launch_browser(headless=headless)
+    report = await run_test(
+        url=url,
+        steps=parse_result.steps,
+        reruns=reruns,
+        headless=headless,
+        instruction=content,
+    )
 
-    try:
-        all_results = []
+    # print results
+    if report.classified.total_runs == 1:
+        run_result = report.classified.runs[0]
+        root_cause = report.classified.root_cause
+        print_run_result(run_result)
+        if root_cause:
+            print_root_cause(root_cause)
+    else:
+        print_classified_result(report.classified)
 
-        for i in range(reruns):
-            if reruns > 1:
-                log_info(f"Run {i + 1} of {reruns}...")
-
-            # navigate fresh each run
-            success = await navigate_to(session.page, url)
-            if not success:
-                log_error(f"Navigation failed on run {i + 1}.")
-                break
-
-            run_result, root_cause = await run_steps(
-                session.page,
-                parse_result.steps,
-            )
-            all_results.append((run_result, root_cause))
-
-            # print individual run result only when doing multiple reruns
-            if reruns > 1:
-                print_run_result(run_result)
-
-        if not all_results:
-            log_error("No runs completed.")
-            return
-
-        # single run — print normally
-        if reruns == 1:
-            run_result, root_cause = all_results[0]
-            print_run_result(run_result)
-            if root_cause:
-                print_root_cause(root_cause)
-            return
-
-        # multiple reruns — classify and print
-        classified = classify_reruns(all_results)
-        print_classified_result(classified)
-
-    finally:
-        await close_browser(session)
+    if report.saved_run_id:
+        log_success(f"Saved to DB → {report.saved_run_id}")
 
 
 async def process_natural_language_instruction(
