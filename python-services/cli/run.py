@@ -2,22 +2,42 @@ import asyncio
 import argparse
 import sys
 import os
+import re
+from urllib.parse import urlsplit
 
 # make sure imports work from project root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.browser import launch_browser, navigate_to, close_browser, take_screenshot
 from core.auditor import run_full_audit
+from core.runner import run_test, TestRunReport
 
 from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
 
 from parser.llm_output_parser import parse_llm_output
+from parser.natural_language import respond_to_instruction
+from parser.step_runner import run_steps
 
-from utils.logger import log_step, log_success, log_error, console
-from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result
+from utils.logger import log_step, log_success, log_error, log_info, console
+from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result, print_root_cause, print_classified_result
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
+
+from helpers.classify_reruns import classify_reruns
+
+
+def extract_instruction_url(instruction: str) -> str | None:
+    match = re.search(r"https?://[^\s<>\"]+", instruction, re.IGNORECASE)
+    if not match:
+        return None
+
+    candidate = match.group(0).rstrip(".,;:!?)]}'\"`")
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    return candidate
 
 
 async def cmd_check_browser(url: str, screenshot: bool, headless: bool):
@@ -139,6 +159,199 @@ async def cmd_parse_llm(input_file: str | None, raw: str | None):
     print_parse_result(result)
 
 
+async def cmd_run_steps(
+    url: str,
+    raw: str | None,
+    input_file: str | None,
+    headless: bool,
+    reruns: int,
+):
+    # get raw input
+    if input_file:
+        try:
+            with open(input_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            log_error(f"File not found: {input_file}")
+            return
+    elif raw:
+        content = raw
+    else:
+        log_error("Provide either --file or --raw")
+        return
+
+    # parse
+    parse_result = parse_llm_output(content)
+    print_parse_result(parse_result)
+
+    if not parse_result.success or not parse_result.steps:
+        log_error("No valid steps to run.")
+        return
+
+    report = await run_test(
+        url=url,
+        steps=parse_result.steps,
+        reruns=reruns,
+        headless=headless,
+        instruction=content,
+    )
+
+    # print results
+    if report.classified.total_runs == 1:
+        run_result = report.classified.runs[0]
+        root_cause = report.classified.root_cause
+        print_run_result(run_result)
+        if root_cause:
+            print_root_cause(root_cause)
+    else:
+        print_classified_result(report.classified)
+
+    if report.saved_run_id:
+        log_success(f"Saved to DB → {report.saved_run_id}")
+
+
+async def process_natural_language_instruction(
+    session,
+    instruction: str,
+    dry_run: bool,
+    conversation_history: list[dict[str, str]] | None = None,
+):
+    """Answer a page question or execute generated QA steps on an open session."""
+    snapshot = await extract_accessibility_tree(session.page)
+    if not snapshot:
+        log_error("Could not extract page context for Groq.")
+        return
+
+    try:
+        page_title = await session.page.title()
+        page_text = await session.page.locator("body").inner_text(timeout=5000)
+        response = await respond_to_instruction(
+            instruction,
+            snapshot,
+            page_title,
+            page_text,
+            conversation_history,
+        )
+    except Exception as error:
+        log_error(f"Groq request failed: {error}")
+        return
+
+    if conversation_history is not None and response.history_content:
+        conversation_history.extend([
+            {"role": "user", "content": instruction},
+            {"role": "assistant", "content": response.history_content},
+        ])
+
+    if response.kind == "answer":
+        console.print("[bold]Answer[/bold]")
+        console.print(response.answer or "", markup=False)
+        return
+
+    parse_result = parse_llm_output(response.steps_json or "[]")
+    print_parse_result(parse_result)
+
+    if not parse_result.success or not parse_result.steps or parse_result.error:
+        log_error("No complete, valid QA plan was generated. Nothing was run.")
+        return
+
+    if dry_run:
+        log_success("Dry run complete. No browser actions were executed.")
+        return
+
+    run_result, root_cause = await run_steps(session.page, parse_result.steps)
+    print_run_result(run_result)
+
+    if root_cause:
+        print_root_cause(root_cause)
+
+
+async def cmd_run_natural_language(
+    url: str,
+    instruction: str,
+    headless: bool,
+    dry_run: bool,
+):
+    """Run one natural-language instruction in its own browser session."""
+    if not os.getenv("GROQ_API_KEY"):
+        log_error("GROQ_API_KEY is not set. Add it to .env and recreate the service.")
+        return
+
+    session = await launch_browser(headless=headless)
+    try:
+        if not await navigate_to(session.page, url):
+            log_error("Navigation failed. Exiting.")
+            return
+        await process_natural_language_instruction(session, instruction, dry_run)
+    finally:
+        await close_browser(session)
+
+
+async def _run_interactive(url: str):
+    """Read instructions against one persistent browser and conversation."""
+    if not os.getenv("GROQ_API_KEY"):
+        log_error("GROQ_API_KEY is not set. Add it to .env and recreate the service.")
+        return
+
+    session = None
+    current_url = None
+    conversation_history: list[dict[str, str]] = []
+
+    try:
+        while True:
+            try:
+                instruction = input(">>> ").strip()
+            except EOFError:
+                console.print("\n[dim]End of input. Exiting.[/dim]")
+                return
+
+            if not instruction:
+                continue
+
+            instruction_url = extract_instruction_url(instruction)
+            target_url = instruction_url or current_url or url
+
+            if session is None:
+                session = await launch_browser(headless=True)
+
+            should_navigate = current_url is None or (
+                instruction_url is not None
+                and instruction_url.rstrip("/") != current_url.rstrip("/")
+            )
+            if should_navigate:
+                console.print(f"Navigating to: {target_url}")
+                if not await navigate_to(session.page, target_url):
+                    log_error("Navigation failed. Enter another instruction or URL to retry.")
+                    continue
+                current_url = target_url
+            else:
+                console.print(f"Using current page: {session.page.url}")
+
+            try:
+                await process_natural_language_instruction(
+                    session,
+                    instruction,
+                    dry_run=False,
+                    conversation_history=conversation_history,
+                )
+            except Exception as error:
+                log_error(f"Instruction failed: {error}")
+    finally:
+        if session is not None:
+            await close_browser(session)
+
+
+def run_interactive(url: str):
+    """Keep one browser session open until the user exits the REPL."""
+    console.rule("[step]Natural-Language QA CLI[/step]")
+    console.print(f"Default target URL: {url}")
+    console.print("Enter a QA instruction. Press Ctrl-C or Ctrl-D to quit.")
+
+    try:
+        asyncio.run(_run_interactive(url))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted. Exiting.[/dim]")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qa-cli",
@@ -247,11 +460,77 @@ def build_parser() -> argparse.ArgumentParser:
         help="Raw LLM output string passed directly",
     )
 
+    # --- run-steps command ---
+    run_parser = subparsers.add_parser(
+        "run-steps",
+        help="Parse LLM output and execute steps against a live page",
+    )
+    run_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to run steps against",
+    )
+    run_input = run_parser.add_mutually_exclusive_group(required=True)
+    run_input.add_argument(
+        "--raw",
+        type=str,
+        help="Raw LLM output string",
+    )
+    run_input.add_argument(
+        "--file",
+        type=str,
+        help="Path to file containing LLM output",
+    )
+    run_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+    run_parser.add_argument(
+        "--reruns",
+        type=int,
+        default=1,
+        help="Number of times to run the steps (default: 1, max: 5)",
+    )
+
+    # --- run-natural-language command ---
+    natural_parser = subparsers.add_parser(
+        "run-natural-language",
+        help="Use Groq to plan and run QA steps from a natural-language instruction",
+    )
+    natural_parser.add_argument(
+        "--url",
+        type=str,
+        required=True,
+        help="URL to inspect and run steps against",
+    )
+    natural_parser.add_argument(
+        "--instruction",
+        type=str,
+        required=True,
+        help="Natural-language QA instruction",
+    )
+    natural_parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run browser in headful mode",
+    )
+    natural_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the generated plan without executing browser actions",
+    )
+
     return parser
 
 
 def main():
     parser = build_parser()
+    if len(sys.argv) == 1:
+        run_interactive(os.getenv("TARGET_APP_URL", "http://127.0.0.1:5173"))
+        return
+
     args = parser.parse_args()
 
     if args.command == "check-browser":
@@ -285,6 +564,23 @@ def main():
         asyncio.run(cmd_parse_llm(
             input_file=getattr(args, "file", None),
             raw=getattr(args, "raw", None),
+        ))
+
+    if args.command == "run-steps":
+        asyncio.run(cmd_run_steps(
+            url=args.url,
+            raw=getattr(args, "raw", None),
+            input_file=getattr(args, "file", None),
+            headless=not args.headful,
+            reruns=min(max(1, args.reruns), 5),
+        ))
+
+    if args.command == "run-natural-language":
+        asyncio.run(cmd_run_natural_language(
+            url=args.url,
+            instruction=args.instruction,
+            headless=not args.headful,
+            dry_run=args.dry_run,
         ))
 
 if __name__ == "__main__":

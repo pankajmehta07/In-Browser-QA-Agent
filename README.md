@@ -336,6 +336,39 @@ Every parsed step is checked against the action schema before Playwright is
 started. Unsupported actions and missing fields therefore fail early instead
 of reaching browser execution.
 
+### Python CLI: Natural-Language Mode
+
+The Python CLI can use Groq to turn a natural-language instruction into
+supported Playwright steps. It sends the instruction and visible interactive
+element labels from the page to Groq. Add `GROQ_API_KEY` to the root `.env`,
+then rebuild the Python service so the Groq SDK is installed:
+
+```sh
+docker compose up -d --build python-services
+docker compose exec python-services python cli/run.py
+```
+
+With no arguments, the CLI prompts for one natural-language message at a
+time using `>>> `. Questions about the page get a concise, page-grounded answer;
+test instructions generate and run supported browser steps. If a message
+includes an `http://` or `https://` URL, that URL is used; otherwise the CLI
+uses `TARGET_APP_URL` (the Compose default is `http://target-app:5173`). Press
+Ctrl-C or Ctrl-D to quit. The browser page and recent conversation stay active
+throughout the REPL session; instructions without a new URL continue on the
+current page.
+For a single instruction instead, use:
+
+```sh
+docker compose exec python-services python cli/run.py run-natural-language \
+  --url http://target-app:5173 \
+  --instruction "Check that the login page is visible"
+```
+
+Use `--dry-run` to inspect the generated plan without executing it. The model
+defaults to `openai/gpt-oss-120b`; set `GROQ_MODEL` in `.env` to choose a
+different Groq model. Natural-language mode currently supports `click`,
+`type`, `check_visible`, `check_contains`, and `goto` actions.
+
 ### Expanded Playground Scenario
 
 ```text

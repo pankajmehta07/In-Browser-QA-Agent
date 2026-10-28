@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass
-from playwright.async_api import async_playwright, Browser, Page, Playwright
+from playwright.async_api import async_playwright, Browser, Page, Playwright, TimeoutError as PlaywrightTimeoutError
 
 from utils.logger import log_info, log_success, log_error, log_warning
 import os 
@@ -85,14 +85,22 @@ async def launch_browser(headless: bool = True) -> BrowserSession:
 
 async def navigate_to(page: Page, url: str, timeout_ms: int = 30000) -> bool:
     """
-    Navigate to a URL and wait for the page to fully load.
+    Navigate to a URL and wait for the document to become available.
     Returns True on success, False on failure.
     """
     log_info(f"Navigating to: {url}")
 
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-        await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        await page.goto(url, wait_until="commit", timeout=timeout_ms)
+        try:
+            await page.wait_for_load_state(
+                "domcontentloaded",
+                timeout=min(timeout_ms, 10000),
+            )
+        except PlaywrightTimeoutError:
+            log_warning("Document committed but DOMContentLoaded timed out; continuing.")
+
+        await page.locator("body").wait_for(state="attached", timeout=5000)
 
         current_url = page.url
         title = await page.title()
