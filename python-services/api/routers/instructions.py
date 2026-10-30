@@ -115,7 +115,7 @@ async def run_instruction(body: RunInstructionRequest):
 
     return RunInstructionResponse(
         status=classified.status,
-        saved_run_id=report.saved_run_id,
+        saved_run_id=str(report.saved_run_id),
         total_steps=classified.runs[-1].total_steps if classified.runs else 0,
         passed_steps=classified.runs[-1].passed_steps if classified.runs else 0,
         failed_steps=classified.runs[-1].failed_steps if classified.runs else 0,
