@@ -6,6 +6,7 @@ from utils.logger import log_info, log_success, log_error, log_warning
 
 from core.root_cause import explain_failure, RootCause
 from core.resolver import resolve_button, ResolutionResult
+from core.page_registry import resolve_static, get_base_url
 
 
 # known URL targets for goto action
@@ -164,18 +165,168 @@ async def _execute_step(
 
 async def _action_goto(page: Page, target: str) -> dict:
     """
-    Verify the expected page is currently loaded by checking
-    for a heading matching the target name.
-    Does not navigate — navigation is done by browser.py before steps run.
+    Two modes depending on target:
+
+    URL (starts with http/https):
+      → navigate directly
+
+    Page name (e.g. "Login", "Dashboard"):
+      → verify current page via fallback chain
+      → if no match: check static registry → navigate
+      → if not in registry: scan links on current page → navigate
+      → verify again after navigation
+      → fail with helpful message if all options exhausted
     """
-    normalized = target.strip().lower()
-    heading_text = GOTO_TARGETS.get(normalized, target)
+    # ── mode 1: target is a URL — navigate directly ───────────────────────────
+    if target.strip().lower().startswith(("http://", "https://")):
+        await page.goto(target, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_load_state("networkidle", timeout=30000)
+        return {"selector_used": f"navigate → {target}"}
 
-    await expect(
-        page.get_by_role("heading", name=heading_text)
-    ).to_be_visible(timeout=5000)
+    # ── mode 2: target is a page name ─────────────────────────────────────────
 
-    return {}
+    # step 1 — verify current page first
+    verified, selector = await _verify_page(page, target)
+    if verified:
+        return {"selector_used": selector}
+
+    # current page doesn't match — try to navigate there
+
+    # step 2 — check static registry
+    static_url = resolve_static(target)
+    if static_url:
+        await _navigate_and_wait(page, static_url)
+
+        verified, selector = await _verify_page(page, target)
+        if verified:
+            return {
+                "selector_used": f"static registry → {static_url} → {selector}"
+            }
+
+    # step 3 — scan links on current page dynamically
+    dynamic_url = await _scan_links_for_target(page, target)
+    if dynamic_url:
+        await _navigate_and_wait(page, dynamic_url)
+
+        verified, selector = await _verify_page(page, target)
+        if verified:
+            return {
+                "selector_used": f"dynamic scan → {dynamic_url} → {selector}"
+            }
+
+    # all options exhausted
+    raise Exception(
+        f'Could not reach page "{target}". '
+        f'Checked current page, static registry and link scan. '
+        f'Current URL: {page.url}'
+    )
+
+
+# ── private helpers ────────────────────────────────────────────────────────────
+
+async def _verify_page(page: Page, target: str) -> tuple[bool, str]:
+    """
+    Try to verify the current page matches target.
+    Returns (matched, selector_used).
+
+    Fallback chain:
+      1. heading matches target
+      2. page title contains target
+      3. URL contains target slug
+      4. any visible text contains target
+    """
+    # fallback 1 — heading
+    try:
+        await expect(
+            page.get_by_role("heading", name=target)
+        ).to_be_visible(timeout=2000)
+        return True, f'role=heading[name="{target}"]'
+    except Exception:
+        pass
+
+    # fallback 2 — page title
+    try:
+        title = await page.title()
+        if target.strip().lower() in title.strip().lower():
+            return True, f"page title contains '{target}'"
+    except Exception:
+        pass
+
+    # fallback 3 — URL slug
+    try:
+        current_url = page.url.lower()
+        slug        = target.strip().lower().replace(" ", "-")
+        if slug in current_url or target.strip().lower() in current_url:
+            return True, f"url contains '{slug}'"
+    except Exception:
+        pass
+
+    # fallback 4 — visible text
+    try:
+        await expect(
+            page.get_by_text(target, exact=False)
+        ).to_be_visible(timeout=2000)
+        return True, f'text contains "{target}"'
+    except Exception:
+        pass
+
+    return False, ""
+
+
+async def _scan_links_for_target(page: Page, target: str) -> str | None:
+    """
+    Scan all links on the current page for one whose
+    text matches target. Returns the full URL or None.
+    """
+    try:
+        links = await page.evaluate("""
+            (target) => {
+                const normalized = target.trim().toLowerCase();
+                const results = [];
+
+                document.querySelectorAll("a[href]").forEach(el => {
+                    const text = (el.innerText || el.textContent || "").trim().toLowerCase();
+                    const href = el.getAttribute("href") || "";
+
+                    if (
+                        text === normalized ||
+                        text.includes(normalized) ||
+                        normalized.includes(text)
+                    ) {
+                        results.push(href);
+                    }
+                });
+
+                return results;
+            }
+        """, target)
+
+        if not links:
+            return None
+
+        href = links[0]
+
+        # already a full URL
+        if href.startswith("http"):
+            return href
+
+        # relative path — prepend base URL
+        if href.startswith("/"):
+            return get_base_url() + href
+
+        # relative without slash
+        return get_base_url() + "/" + href
+
+    except Exception:
+        return None
+
+
+async def _navigate_and_wait(page: Page, url: str):
+    """
+    Navigate to url and wait for page to settle.
+    """
+    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    await page.wait_for_load_state("networkidle", timeout=10000)
 
 
 async def _action_type(page: Page, target: str, value: str) -> dict:
