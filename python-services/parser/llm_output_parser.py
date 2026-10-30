@@ -6,10 +6,30 @@ from utils.logger import log_info, log_success, log_warning, log_error
 
 
 # valid actions the runner supports
-VALID_ACTIONS = {"goto", "type", "click", "check_visible", "check_contains"}
+VALID_ACTIONS = {
+    "goto",
+    "type",
+    "click",
+    "check_visible",
+    "check_contains",
+    "scroll_to",
+    "scroll_down",
+    "wait_for_element",
+    "wait_seconds",
+    "hover",
+    "press_key",
+    "select_option",
+}
 
 # actions that require a value field
-ACTIONS_WITH_VALUE = {"type", "check_contains"}
+ACTIONS_WITH_VALUE = {
+    "type",
+    "check_contains",
+    "select_option",  # value is the option to select
+    "scroll_down",    # value is pixels to scroll
+    "wait_seconds",   # value is seconds
+    "press_key",      # value is the key name
+}
 
 
 def parse_llm_output(raw: str) -> ParseResult:

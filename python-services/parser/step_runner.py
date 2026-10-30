@@ -100,6 +100,20 @@ async def _execute_step(
             extra = await _action_check_visible(page, step.target)
         elif step.action == "check_contains":
             extra = await _action_check_contains(page, step.target, step.value or "")
+        elif step.action == "scroll_to":
+            extra = await _action_scroll_to(page, step.target)
+        elif step.action == "scroll_down":
+            extra = await _action_scroll_down(page, step.value or "300")
+        elif step.action == "wait_for_element":
+            extra = await _action_wait_for_element(page, step.target)
+        elif step.action == "wait_seconds":
+            extra = await _action_wait_seconds(page, step.value or "1")
+        elif step.action == "hover":
+            extra = await _action_hover(page, step.target)
+        elif step.action == "press_key":
+            extra = await _action_press_key(page, step.target, step.value or "Enter")
+        elif step.action == "select_option":
+            extra = await _action_select_option(page, step.target, step.value or "")
         else:
             raise ValueError(f"Unsupported action: {step.action}")
 
@@ -238,3 +252,168 @@ async def _action_check_contains(page: Page, target: str, value: str) -> dict:
     await expect(field).to_have_value(value, timeout=5000)
 
     return {"selector_used": f"label={target}"}
+
+
+async def _action_scroll_to(page: Page, target: str) -> dict:
+    """
+    Scroll a specific element into view by its label, text or role.
+    Tries label first, falls back to text match.
+    """
+    try:
+        locator = page.get_by_label(target)
+        await locator.scroll_into_view_if_needed(timeout=3000)
+        return {"selector_used": f"label={target}"}
+    except Exception:
+        pass
+
+    locator = page.get_by_text(target)
+    await locator.first.scroll_into_view_if_needed(timeout=3000)
+    return {"selector_used": f"text={target}"}
+
+
+async def _action_scroll_down(page: Page, pixels: str) -> dict:
+    """
+    Scroll the page down by a fixed number of pixels.
+    value field is the pixel amount as a string.
+    """
+    try:
+        amount = int(pixels)
+    except ValueError:
+        amount = 300
+
+    await page.evaluate(f"window.scrollBy(0, {amount})")
+    return {"selector_used": f"window.scrollBy(0, {amount})"}
+
+
+async def _action_wait_for_element(page: Page, target: str) -> dict:
+    """
+    Wait until an element matching target is visible.
+    Tries role=button, then role=heading, then text.
+    """
+    try:
+        locator = page.get_by_role("button", name=target)
+        await locator.wait_for(state="visible", timeout=10000)
+        return {"selector_used": f'role=button[name="{target}"]'}
+    except Exception:
+        pass
+
+    try:
+        locator = page.get_by_role("heading", name=target)
+        await locator.wait_for(state="visible", timeout=10000)
+        return {"selector_used": f'role=heading[name="{target}"]'}
+    except Exception:
+        pass
+
+    locator = page.get_by_text(target)
+    await locator.first.wait_for(state="visible", timeout=10000)
+    return {"selector_used": f'text="{target}"'}
+
+
+async def _action_wait_seconds(page: Page, seconds: str) -> dict:
+    """
+    Wait for a fixed number of seconds.
+    value field is the number of seconds as a string.
+    Capped at 10 seconds.
+    """
+    try:
+        amount = float(seconds)
+    except ValueError:
+        amount = 1.0
+
+    amount = min(amount, 10.0)
+    await page.wait_for_timeout(amount * 1000)
+    return {"selector_used": f"wait {amount}s"}
+
+
+async def _action_hover(page: Page, target: str) -> dict:
+    """
+    Hover over a button, link or text element.
+    Tries button role first, then link, then text.
+    """
+    try:
+        locator = page.get_by_role("button", name=target)
+        await locator.wait_for(state="visible", timeout=3000)
+        await locator.hover()
+        return {"selector_used": f'role=button[name="{target}"]'}
+    except Exception:
+        pass
+
+    try:
+        locator = page.get_by_role("link", name=target)
+        await locator.wait_for(state="visible", timeout=3000)
+        await locator.hover()
+        return {"selector_used": f'role=link[name="{target}"]'}
+    except Exception:
+        pass
+
+    locator = page.get_by_text(target)
+    await locator.first.hover()
+    return {"selector_used": f'text="{target}"'}
+
+
+# supported keys map — normalizes common names to Playwright key strings
+_KEY_MAP: dict[str, str] = {
+    "enter":     "Enter",
+    "tab":       "Tab",
+    "escape":    "Escape",
+    "esc":       "Escape",
+    "backspace": "Backspace",
+    "delete":    "Delete",
+    "arrowup":   "ArrowUp",
+    "arrowdown": "ArrowDown",
+    "arrowleft": "ArrowLeft",
+    "arrowright":"ArrowRight",
+    "space":     "Space",
+    "home":      "Home",
+    "end":       "End",
+    "pageup":    "PageUp",
+    "pagedown":  "PageDown",
+}
+
+
+async def _action_press_key(page: Page, target: str, key: str) -> dict:
+    """
+    Press a keyboard key on a specific element or the page.
+    target is the element label/name.
+    value is the key name (Enter, Tab, Escape etc).
+
+    If target is "page" press on the whole page.
+    """
+    normalized_key = _KEY_MAP.get(key.strip().lower(), key.strip())
+
+    if target.strip().lower() == "page":
+        await page.keyboard.press(normalized_key)
+        return {"selector_used": f"keyboard.press({normalized_key})"}
+
+    try:
+        locator = page.get_by_label(target)
+        await locator.wait_for(state="visible", timeout=3000)
+        await locator.press(normalized_key)
+        return {"selector_used": f"label={target}"}
+    except Exception:
+        pass
+
+    locator = page.get_by_role("button", name=target)
+    await locator.wait_for(state="visible", timeout=3000)
+    await locator.press(normalized_key)
+    return {"selector_used": f'role=button[name="{target}"]'}
+
+
+async def _action_select_option(page: Page, target: str, value: str) -> dict:
+    """
+    Select an option from a dropdown by its label.
+    target is the label of the select element.
+    value is the option text or value to select.
+    """
+    locator = page.get_by_label(target)
+    await locator.wait_for(state="visible", timeout=5000)
+
+    # try by label text first, fall back to value attribute
+    try:
+        await locator.select_option(label=value)
+        return {"selector_used": f"label={target} → option label={value}"}
+    except Exception:
+        pass
+
+    await locator.select_option(value=value)
+    return {"selector_used": f"label={target} → option value={value}"}
