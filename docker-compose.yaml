@@ -72,6 +72,8 @@ services:
     build:
       context: ./python-services
       dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     working_dir: /workspace/python-services
     volumes:
       - ./python-services:/workspace/python-services
@@ -84,6 +86,10 @@ services:
       DB_NAME: ${POSTGRES_DB:-qa_agent}
       DB_USER: ${POSTGRES_USER:-qa_user}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - qa-network
 
