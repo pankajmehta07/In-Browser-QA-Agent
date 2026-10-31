@@ -3,6 +3,7 @@ import argparse
 import sys
 import os
 import re
+from dataclasses import asdict
 from urllib.parse import urlsplit
 
 # make sure imports work from project root
@@ -19,7 +20,7 @@ from parser.llm_output_parser import parse_llm_output
 from parser.natural_language import respond_to_instruction
 from parser.step_runner import run_steps
 
-from utils.logger import log_step, log_success, log_error, log_info, console
+from utils.logger import log_step, log_success, log_error, log_info, log_warning, console
 from utils.printer import print_page_content, print_accessibility_snapshot, print_audit_report, print_parse_result, print_run_result, print_root_cause, print_classified_result
 from utils.serializer import serialize_report
 from utils.file_writer import generate_filename, save_report_to_file
@@ -216,53 +217,128 @@ async def process_natural_language_instruction(
     dry_run: bool,
     conversation_history: list[dict[str, str]] | None = None,
 ):
-    """Answer a page question or execute generated QA steps on an open session."""
-    snapshot = await extract_accessibility_tree(session.page)
-    if not snapshot:
-        log_error("Could not extract page context for Groq.")
-        return
+    """Observe, act, and replan toward a question or QA goal on an open session."""
+    max_actions = 8
+    evidence: dict[str, dict] = {}
+    action_history: list[dict] = []
+    attempted_actions: set[tuple] = set()
+    known_urls = {session.page.url}
+    explicit_url = extract_instruction_url(instruction)
+    if explicit_url:
+        known_urls.add(explicit_url)
+    feedback = None
+    research_only = False
 
-    try:
-        page_title = await session.page.title()
-        page_text = await session.page.locator("body").inner_text(timeout=5000)
-        response = await respond_to_instruction(
-            instruction,
-            snapshot,
-            page_title,
-            page_text,
-            conversation_history,
-        )
-    except Exception as error:
-        log_error(f"Groq request failed: {error}")
-        return
+    for _ in range(max_actions + 1):
+        snapshot = await extract_accessibility_tree(session.page)
+        if not snapshot:
+            log_error("Could not extract page context for Groq.")
+            return
 
-    if conversation_history is not None and response.history_content:
-        conversation_history.extend([
-            {"role": "user", "content": instruction},
-            {"role": "assistant", "content": response.history_content},
-        ])
+        try:
+            page_title = await session.page.title()
+            page_text = await session.page.locator("body").inner_text(timeout=5000)
+            evidence[session.page.url] = {
+                "url": session.page.url,
+                "title": page_title,
+                "text": page_text[:8000],
+            }
+            known_urls.add(session.page.url)
+            known_urls.update(
+                node.href for node in snapshot.nodes
+                if node.href and node.href.startswith(("http://", "https://"))
+            )
+            agent_context = {
+                "remaining_actions": max_actions - len(action_history),
+                "visited_urls": list(evidence),
+                "previous_pages": [
+                    page for url, page in evidence.items() if url != session.page.url
+                ][-5:],
+                "actions": action_history,
+                "feedback": feedback,
+            }
+            response = await respond_to_instruction(
+                instruction, snapshot, page_title, page_text,
+                (conversation_history or [])[-12:], agent_context,
+            )
+        except Exception as error:
+            log_error(f"Could not interpret the instruction or read page evidence: {error}")
+            return
 
-    if response.kind == "answer":
-        console.print("[bold]Answer[/bold]")
-        console.print(response.answer or "", markup=False)
-        return
+        if response.kind in ("answer", "done"):
+            if any(url not in evidence for url in response.sources):
+                feedback = "The proposed answer cited an unvisited page. Use only observed supporting evidence."
+                continue
+            if response.kind == "answer" and len(evidence) > 1 and not response.sources:
+                feedback = "Include the visited supporting page URLs in sources for this multi-page answer."
+                continue
+            if conversation_history is not None and response.history_content:
+                conversation_history.extend([
+                    {"role": "user", "content": instruction},
+                    {"role": "assistant", "content": response.history_content},
+                ])
+            console.print("[bold]Answer[/bold]" if response.kind == "answer" else "[bold]Outcome[/bold]")
+            console.print(response.answer or "", markup=False)
+            if response.kind == "answer":
+                for url in dict.fromkeys(response.sources or [session.page.url]):
+                    console.print(f"Source: {url}", markup=False)
+            return
 
-    parse_result = parse_llm_output(response.steps_json or "[]")
-    print_parse_result(parse_result)
+        if response.kind == "browse":
+            research_only = True
+        if research_only and response.kind != "browse":
+            feedback = "This is a read-only research task. Choose an observed link URL or provide a final factual answer."
+            continue
 
-    if not parse_result.success or not parse_result.steps or parse_result.error:
-        log_error("No complete, valid QA plan was generated. Nothing was run.")
-        return
+        parse_result = parse_llm_output(response.steps_json or "[]")
+        if not parse_result.success or not parse_result.steps or parse_result.error:
+            feedback = "No complete valid next action was generated. Choose one supported action or finish honestly."
+            continue
+        if len(parse_result.steps) != 1:
+            feedback = "Choose exactly one next action. Later steps must be planned from fresh page evidence."
+            continue
 
-    if dry_run:
-        log_success("Dry run complete. No browser actions were executed.")
-        return
+        step = parse_result.steps[0]
+        target_url = urlsplit(step.target)
+        if step.action == "goto" and target_url.scheme:
+            if target_url.scheme not in ("http", "https") or step.target not in known_urls:
+                feedback = "Navigation rejected: use an exact observed HTTP(S) link URL or a user-provided URL."
+                continue
+        if response.kind == "browse" and (
+            step.action != "goto" or step.target not in known_urls
+            or target_url.scheme not in ("http", "https")
+        ):
+            feedback = "Research permits only read-only navigation to an observed HTTP(S) URL."
+            continue
 
-    run_result, root_cause = await run_steps(session.page, parse_result.steps)
-    print_run_result(run_result)
+        if dry_run:
+            print_parse_result(parse_result)
+            log_success("Dry run complete. No browser actions were executed; later actions depend on fresh page evidence.")
+            return
 
-    if root_cause:
-        print_root_cause(root_cause)
+        if len(action_history) >= max_actions:
+            break
+        fingerprint = (session.page.url, step.action, step.target, step.value)
+        if fingerprint in attempted_actions:
+            feedback = "That action was already attempted on this page. Choose another observed route or finish honestly."
+            continue
+        attempted_actions.add(fingerprint)
+
+        log_info(f"Agent action {len(action_history) + 1}/{max_actions}: {step.action} {step.target}")
+        run_result, root_cause = await run_steps(session.page, [step])
+        print_run_result(run_result)
+        action_history.append({
+            "url_before": fingerprint[0],
+            "url_after": session.page.url,
+            "result": asdict(run_result.steps[0]),
+        })
+        feedback = "Inspect the new evidence and decide whether the goal is complete or another action is needed."
+        if root_cause:
+            print_root_cause(root_cause)
+            feedback = "The last action failed. Use the recorded error to choose another observed route or explain the limitation."
+
+    log_warning("Agent stopped at its planning limit without a final answer or outcome. The task may be incomplete.")
+    console.print(f"Last page: {session.page.url}", markup=False)
 
 
 async def cmd_run_natural_language(
@@ -333,6 +409,7 @@ async def _run_interactive(url: str):
                     dry_run=False,
                     conversation_history=conversation_history,
                 )
+                current_url = session.page.url
             except Exception as error:
                 log_error(f"Instruction failed: {error}")
     finally:

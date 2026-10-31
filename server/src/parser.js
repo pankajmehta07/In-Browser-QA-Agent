@@ -6,13 +6,24 @@ export function parseInstruction(instruction) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  return validateSteps(lines.map(parseLine));
+  return validateSteps(lines.flatMap((line) => {
+    const navigation = line.replace(/\.$/, "").match(
+      /^(?:go\s*to|navigate to) (.+?) on (https?:\/\/\S+)$/i,
+    );
+    if (navigation) {
+      return [
+        { action: "goto", target: navigation[2] },
+        { action: "goto", target: navigation[1] },
+      ];
+    }
+    return [parseLine(line)];
+  }));
 }
 
 function parseLine(line) {
   const cleanLine = line.replace(/\.$/, "");
 
-  const goToMatch = cleanLine.match(/^go to (.+)$/i);
+  const goToMatch = cleanLine.match(/^(?:go\s*to|navigate to) (.+)$/i);
   if (goToMatch) {
     return {
       action: "goto",

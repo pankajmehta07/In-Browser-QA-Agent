@@ -1,11 +1,12 @@
 import time
+from urllib.parse import urlsplit
 from playwright.async_api import Page, expect
 
 from parser.models import ParsedStep, StepExecutionResult, RunResult
 from utils.logger import log_info, log_success, log_error, log_warning
 
 from core.root_cause import explain_failure, RootCause
-from core.resolver import resolve_button, ResolutionResult
+from core.resolver import resolve_button, ResolutionResult, find_interactive_locator
 
 
 # known URL targets for goto action
@@ -149,19 +150,19 @@ async def _execute_step(
 # ── action handlers ────────────────────────────────────────────────────────────
 
 async def _action_goto(page: Page, target: str) -> dict:
-    """
-    Verify the expected page is currently loaded by checking
-    for a heading matching the target name.
-    Does not navigate — navigation is done by browser.py before steps run.
-    """
+    """Open a URL or activate a named navigation button or link."""
+    url = urlsplit(target)
+    if url.scheme in ("http", "https") and url.netloc:
+        await page.goto(target, wait_until="domcontentloaded")
+        return {"selector_used": target}
+
     normalized = target.strip().lower()
     heading_text = GOTO_TARGETS.get(normalized, target)
 
-    await expect(
-        page.get_by_role("heading", name=heading_text)
-    ).to_be_visible(timeout=5000)
-
-    return {}
+    heading = page.get_by_role("heading", name=heading_text, exact=True).first
+    if await heading.is_visible():
+        return {"selector_used": f'role=heading[name="{heading_text}"]'}
+    return await _action_click(page, target)
 
 
 async def _action_type(page: Page, target: str, value: str) -> dict:
@@ -178,7 +179,7 @@ async def _action_type(page: Page, target: str, value: str) -> dict:
 
 async def _action_click(page: Page, target: str) -> dict:
     """
-    Click a button using the full resolver pipeline.
+    Click a button or link using the full resolver pipeline.
     Tier 1 — exact match
     Tier 2 — approved memory
     Tier 3 — similarity
@@ -190,13 +191,15 @@ async def _action_click(page: Page, target: str) -> dict:
         raise _UnresolvedElementError(
             target=target,
             message=(
-                f'Could not resolve button "{target}" '
+                f'Could not resolve button or link "{target}" '
                 f'after {len(resolution.attempts)} tier(s). '
                 f'Strategy: {resolution.resolution_strategy}.'
             ),
         )
 
-    locator = page.get_by_role("button", name=resolution.resolved_name)
+    locator = await find_interactive_locator(
+        page, resolution.resolved_role, resolution.resolved_name
+    )
     await locator.click()
 
     return {

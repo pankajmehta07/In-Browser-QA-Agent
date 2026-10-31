@@ -311,7 +311,7 @@ Supported sentence patterns:
 
 | Category | Pattern | Example |
 |---|---|---|
-| Navigation | `Go to ...` | `Go to QA Playground.` |
+| Navigation | `Go to ...` / `Goto ...` / `Navigate to ...` | `Go to QA Playground.` |
 | Input | `Type ... into ...` | `Type Smoke test into Scenario Name.` |
 | Input | `Clear ...` | `Clear Scenario Name.` |
 | Pointer | `Click ...` | `Click Add User.` |
@@ -332,15 +332,30 @@ Supported sentence patterns:
 | Assertion | `Check that ... is checked` | `Check that Email reports is checked.` |
 | Assertion | `Check that ... is unchecked` | `Check that Weekly digest is unchecked.` |
 
+Navigation and click actions resolve both buttons and links by accessible name.
+`goto Projects on https://bimarshakhanal.com.np/` opens the website and follows
+its Projects link. Duplicate visible links are accepted only when they point
+to the same resolved URL; links with conflicting destinations remain ambiguous.
+Use `Check that ... is visible` for assertions rather than navigation.
+
 Every parsed step is checked against the action schema before Playwright is
 started. Unsupported actions and missing fields therefore fail early instead
 of reaching browser execution.
 
+To navigate the example website using the container:
+
+```sh
+docker compose run --rm --no-deps python-services python cli/run.py run-natural-language \
+  --url https://bimarshakhanal.com.np/ \
+  --instruction "goto projects on https://bimarshakhanal.com.np/"
+```
+
 ### Python CLI: Natural-Language Mode
 
-The Python CLI can use Groq to turn a natural-language instruction into
-supported Playwright steps. It sends the instruction and visible interactive
-element labels from the page to Groq. Add `GROQ_API_KEY` to the root `.env`,
+The Python CLI uses Groq to work toward a natural-language question or QA goal.
+It sends page text, interactive elements, discovered link destinations, and
+action feedback to Groq, executes one action, then reads the page and replans.
+Add `GROQ_API_KEY` to the root `.env`,
 then rebuild the Python service so the Groq SDK is installed:
 
 ```sh
@@ -349,8 +364,10 @@ docker compose exec python-services python cli/run.py
 ```
 
 With no arguments, the CLI prompts for one natural-language message at a
-time using `>>> `. Questions about the page get a concise, page-grounded answer;
-test instructions generate and run supported browser steps. If a message
+time using `>>> `. Questions can follow relevant discovered links to find
+information on other pages, then return an evidence-grounded answer with source
+URLs. QA goals infer the necessary supported browser steps without requiring
+explicit instructions for each step. If a message
 includes an `http://` or `https://` URL, that URL is used; otherwise the CLI
 uses `TARGET_APP_URL` (the Compose default is `http://target-app:5173`). Press
 Ctrl-C or Ctrl-D to quit. The browser page and recent conversation stay active
@@ -364,7 +381,31 @@ docker compose exec python-services python cli/run.py run-natural-language \
   --instruction "Check that the login page is visible"
 ```
 
-Use `--dry-run` to inspect the generated plan without executing it. The model
+Both the REPL and single-instruction command use the same bounded agent loop.
+Each instruction allows up to eight browser actions, with repeated actions
+blocked and failures returned to the model for replanning. Research navigation
+is limited to observed HTTP(S) links or a URL supplied by the user; it does not
+authorize form submission or state-changing interactions. The agent reports
+when it cannot finish rather than inventing missing facts.
+
+Groq calls share an 8,000-token rolling-minute budget within each CLI process,
+including selector-healing calls. Requests reserve approximately estimated
+input tokens plus the maximum output, then use reported usage when available.
+Input estimation uses one token per three UTF-8 bytes plus message overhead,
+not one token per byte and not an exact model tokenizer. Provider rate limits
+remain authoritative when this estimate differs from actual token usage.
+The agent trims older context to a 6,000-token estimated input cap, limits
+planner responses to 1,000 tokens, and waits when the minute budget is exhausted.
+Provider rate-limit responses trigger a cooldown and one retry. Separate CLI
+processes or other applications using the same API key share Groq's account
+quota, but not this local budget.
+
+For example, asking `Who are the deputy HODs of the department on https://doece.tcioe.edu.np/`
+lets the agent choose relevant staff or administration links instead of limiting
+its answer to the homepage. Answers depend on what the website actually exposes.
+
+Use `--dry-run` to inspect the next proposed action without executing it;
+later actions depend on fresh page evidence. The model
 defaults to `openai/gpt-oss-120b`; set `GROQ_MODEL` in `.env` to choose a
 different Groq model. Natural-language mode currently supports `click`,
 `type`, `check_visible`, `check_contains`, and `goto` actions.

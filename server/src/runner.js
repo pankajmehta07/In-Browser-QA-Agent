@@ -98,8 +98,8 @@ export async function runHardcodedLoginTest() {
 export async function runStructuredTest(stepsToRun, options = {}) {
   const startedAt = new Date();
   const browser = await chromium.launch({
-    headless: false,
-    slowMo: 300,
+    headless: options.headless ?? false,
+    slowMo: options.headless ? 0 : 300,
   });
 
   const page = await browser.newPage();
@@ -108,7 +108,11 @@ export async function runStructuredTest(stepsToRun, options = {}) {
   let initialAccessibilitySnapshot = [];
 
   try {
-    await page.goto(getTargetAppUrl(options.variant));
+    const firstStep = stepsToRun[0];
+    const initialUrl = firstStep?.action === "goto" && /^https?:\/\//i.test(firstStep.target)
+      ? firstStep.target
+      : getTargetAppUrl(options.variant);
+    await page.goto(initialUrl);
 
     initialAccessibilitySnapshot = await extractAccessibilitySnapshot(page);
 
@@ -157,20 +161,15 @@ export async function runStructuredTest(stepsToRun, options = {}) {
 
 async function executeStructuredStep(page, steps, step) {
   if (step.action === "goto") {
-    await runStep(steps, `Go to ${step.target}`, async () => {
-      if (step.target.toLowerCase() === "login") {
-        await expect(
-          page.getByRole("heading", { name: "Login" }),
-        ).toBeVisible();
-        return;
-      }
-
-      await page.getByRole("button", { name: step.target, exact: true }).click();
-      await expect(
-        page.getByRole("heading", { name: step.target, exact: true }).first(),
-      ).toBeVisible();
-    });
-
+    if (/^https?:\/\//i.test(step.target)) {
+      await runStep(steps, `Go to ${step.target}`, async () => {
+        await page.goto(step.target, { waitUntil: "domcontentloaded" });
+      });
+    } else if (await page.getByRole("heading", { name: step.target, exact: true }).first().isVisible()) {
+      await runStep(steps, `Go to ${step.target}`, async () => {});
+    } else {
+      await runResolvedClickStep(page, steps, step);
+    }
     return;
   }
 
@@ -402,13 +401,14 @@ async function captureFailureScreenshot(page) {
 
 async function runResolvedClickStep(page, steps, step) {
   const startedAt = new Date();
+  const name = `${step.action === "goto" ? "Go to" : "Click"} ${step.target}`;
   const resolution = await resolveButton(page, step.target);
 
   if (!resolution.locator) {
     const finishedAt = new Date();
 
     steps.push({
-      name: `Click ${step.target}`,
+      name,
       status: "failed",
       durationMs: finishedAt - startedAt,
       selectorUsed: null,
@@ -419,10 +419,10 @@ async function runResolvedClickStep(page, steps, step) {
       confidence: resolution.confidence,
       estimatedCostUsd: resolution.estimatedCostUsd,
       resolutionAttempts: resolution.attempts,
-      errorMessage: `Unable to resolve button "${step.target}"`
+      errorMessage: `Unable to resolve button or link "${step.target}"`
     });
 
-    throw new Error(`Unable to resolve button "${step.target}"`);
+    throw new Error(`Unable to resolve button or link "${step.target}"`);
   }
 
   await resolution.locator.click();
@@ -430,7 +430,7 @@ async function runResolvedClickStep(page, steps, step) {
   const finishedAt = new Date();
 
   steps.push({
-    name: `Click ${step.target}`,
+    name,
     status: "passed",
     durationMs: finishedAt - startedAt,
     selectorUsed: resolution.selectorUsed,

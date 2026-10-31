@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from playwright.async_api import Page
+from typing import Literal
+from playwright.async_api import Locator, Page
 
 from extractors.accessibility import extract_accessibility_tree
 from stores.approval_store import find_approved_mapping
@@ -77,16 +78,17 @@ class ResolutionResult:
                                    # accessibility_text_similarity | unresolved
     confidence: float
     estimated_cost_usd: float
-    old_selector: str
+    old_selector: str | None
     new_selector: str | None
     attempts: list[ResolutionAttempt] = field(default_factory=list)
+    resolved_role: Literal["button", "link"] = "button"
 
 
 # ── main resolver ─────────────────────────────────────────────────────────────
 
 async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
     """
-    Try to resolve a button name through four tiers:
+    Try to resolve a button or link name through four tiers:
       Tier 1 — exact role match
       Tier 2 — approved memory (from DB)
       Tier 3 — accessibility text similarity
@@ -101,15 +103,14 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
 
     tier1 = ResolutionAttempt(
         tier="exact_role_match",
-        description=f'Try exact button name "{target_name}"',
+        description=f'Try exact button or link name "{target_name}"',
         status="failed",
         confidence=0.0,
         estimated_cost_usd=0.0,
     )
 
     try:
-        locator = page.get_by_role("button", name=target_name)
-        await locator.wait_for(state="visible", timeout=1000)
+        role = await _find_interactive_role(page, target_name)
 
         tier1.status     = "passed"
         tier1.confidence = 1.0
@@ -125,8 +126,9 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
             confidence=1.0,
             estimated_cost_usd=0.0,
             old_selector=None,
-            new_selector=f'role=button[name="{target_name}"]',
+            new_selector=f'role={role}[name="{target_name}"]',
             attempts=attempts,
+            resolved_role=role,
         )
 
     except Exception as error:
@@ -150,6 +152,7 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
         mapping = await find_approved_mapping(target_name)
 
         if mapping:
+            role = await _find_interactive_role(page, mapping["new_target"])
             tier2.status           = "passed"
             tier2.confidence       = 1.0
             tier2.approved_mapping = {
@@ -172,8 +175,9 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
                 confidence=1.0,
                 estimated_cost_usd=0.0,
                 old_selector=old_selector,
-                new_selector=f'role=button[name="{mapping["new_target"]}"]',
+                new_selector=f'role={role}[name="{mapping["new_target"]}"]',
                 attempts=attempts,
+                resolved_role=role,
             )
 
         tier2.error = "No approved mapping found."
@@ -191,7 +195,7 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
 
     tier3 = ResolutionAttempt(
         tier="accessibility_text_similarity",
-        description=f'Search accessibility snapshot for button similar to "{target_name}"',
+        description=f'Search accessibility snapshot for button or link similar to "{target_name}"',
         status="failed",
         confidence=0.0,
         estimated_cost_usd=0.0,
@@ -203,7 +207,7 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
         if snapshot:
             candidates = [
                 node for node in snapshot.nodes
-                if node.role == "button"
+                if node.role in ("button", "link") and node.visible and node.name
             ]
 
             scored = sorted(
@@ -221,6 +225,8 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
                 tier3.best_candidate = best_node.name
 
                 if best_score >= SIMILARITY_THRESHOLD:
+                    role = "link" if best_node.role == "link" else "button"
+                    await find_interactive_locator(page, role, best_node.name)
                     tier3.status = "passed"
                     attempts.append(tier3)
 
@@ -238,8 +244,9 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
                         confidence=best_score,
                         estimated_cost_usd=0.0,
                         old_selector=old_selector,
-                        new_selector=f'role=button[name="{best_node.name}"]',
+                        new_selector=f'role={role}[name="{best_node.name}"]',
                         attempts=attempts,
+                        resolved_role=role,
                     )
 
                 tier3.error = (
@@ -247,7 +254,7 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
                     f"scored {best_score:.2f} — below threshold {SIMILARITY_THRESHOLD}."
                 )
             else:
-                tier3.error = "No button candidates found in accessibility snapshot."
+                tier3.error = "No button or link candidates found in accessibility snapshot."
 
         else:
             tier3.error = "Accessibility snapshot returned None."
@@ -268,7 +275,7 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
         tier="llm_fallback",
         description=(
             f'Ask LLM to identify the best match for "{target_name}" '
-            f'from visible button names.'
+            f'from visible button and link names.'
         ),
         status="failed",
         confidence=0.0,
@@ -284,13 +291,13 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
             candidates = [
                 node.name
                 for node in snapshot.nodes
-                if node.role == "button"
+                if node.role in ("button", "link")
                 and node.visible
                 and node.name
             ]
 
         if not candidates:
-            tier4.error = "No visible button candidates found for LLM."
+            tier4.error = "No visible button or link candidates found for LLM."
             attempts.append(tier4)
             log_warning("Tier 4 skipped — no candidates.")
 
@@ -300,8 +307,7 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
             if resolved_name:
                 # verify it actually exists on the page
                 try:
-                    locator = page.get_by_role("button", name=resolved_name)
-                    await locator.wait_for(state="visible", timeout=2000)
+                    role = await _find_interactive_role(page, resolved_name)
 
                     tier4.status         = "passed"
                     tier4.confidence     = 0.75
@@ -321,8 +327,9 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
                         confidence=0.75,
                         estimated_cost_usd=0.004,
                         old_selector=old_selector,
-                        new_selector=f'role=button[name="{resolved_name}"]',
+                        new_selector=f'role={role}[name="{resolved_name}"]',
                         attempts=attempts,
+                        resolved_role=role,
                     )
 
                 except Exception:
@@ -359,6 +366,34 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
 
 # ── scoring ───────────────────────────────────────────────────────────────────
 
+async def _find_interactive_role(
+    page: Page, name: str,
+) -> Literal["button", "link"]:
+    for role in ("button", "link"):
+        try:
+            await find_interactive_locator(page, role, name)
+            return role
+        except Exception:
+            if role == "link":
+                raise
+    raise ValueError(f'No button or link matched "{name}".')
+
+
+async def find_interactive_locator(
+    page: Page, role: Literal["button", "link"], name: str,
+) -> Locator:
+    locator = page.get_by_role(role, name=name, exact=True).and_(page.locator(":visible"))
+    await locator.first.wait_for(state="visible", timeout=1000)
+    if await locator.count() > 1:
+        destinations = await locator.evaluate_all(
+            "elements => elements.map(element => element.getAttribute('href') "
+            "? new URL(element.getAttribute('href'), element.baseURI).href : null)"
+        )
+        if role != "link" or None in destinations or len(set(destinations)) != 1:
+            raise ValueError(f'Ambiguous {role} target "{name}".')
+    return locator.first
+
+
 def _score_candidate(expected: str, actual: str) -> float:
     """
     Score how likely `actual` is the same button as `expected`.
@@ -366,6 +401,9 @@ def _score_candidate(expected: str, actual: str) -> float:
     """
     norm_expected = _normalize(expected)
     norm_actual   = _normalize(actual)
+
+    if not norm_expected or not norm_actual:
+        return 0.0
 
     # exact match
     if norm_expected == norm_actual:

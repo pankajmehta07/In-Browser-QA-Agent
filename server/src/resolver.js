@@ -6,15 +6,14 @@ export async function resolveButton(page, targetName) {
 
   const exactAttempt = {
     tier: "exact_role_match",
-    description: `Try exact button name "${targetName}"`,
+    description: `Try exact button or link name "${targetName}"`,
     estimatedCostUsd: 0,
     confidence: 1,
     status: "failed",
   };
 
   try {
-    const exactLocator = page.getByRole("button", { name: targetName });
-    await exactLocator.waitFor({ state: "visible", timeout: 1000 });
+    const { locator: exactLocator, role } = await findInteractive(page, targetName);
 
     exactAttempt.status = "passed";
 
@@ -22,10 +21,10 @@ export async function resolveButton(page, targetName) {
 
     return {
       locator: exactLocator,
-      selectorUsed: `role=button[name="${targetName}"]`,
+      selectorUsed: `role=${role}[name="${targetName}"]`,
       wasHealed: false,
       oldSelector: null,
-      newSelector: `role=button[name="${targetName}"]`,
+      newSelector: `role=${role}[name="${targetName}"]`,
       resolutionStrategy: "exact_role_match",
       confidence: 1,
       estimatedCostUsd: 0,
@@ -46,7 +45,16 @@ export async function resolveButton(page, targetName) {
 
   const approvedMapping = await findApprovedMapping(targetName);
 
+  let memoryMatch;
   if (approvedMapping) {
+    try {
+      memoryMatch = await findInteractive(page, approvedMapping.newTarget);
+    } catch (error) {
+      memoryAttempt.errorMessage = error.message;
+    }
+  }
+
+  if (memoryMatch) {
     memoryAttempt.status = "passed";
     memoryAttempt.confidence = 1;
     memoryAttempt.approvedMapping = {
@@ -57,16 +65,14 @@ export async function resolveButton(page, targetName) {
 
     attempts.push(memoryAttempt);
 
-    const memoryLocator = page.getByRole("button", {
-      name: approvedMapping.newTarget,
-    });
+    const { locator: memoryLocator, role } = memoryMatch;
 
     return {
       locator: memoryLocator,
-      selectorUsed: `role=button[name="${approvedMapping.newTarget}"]`,
+      selectorUsed: `role=${role}[name="${approvedMapping.newTarget}"]`,
       wasHealed: true,
       oldSelector: `role=button[name="${targetName}"]`,
-      newSelector: `role=button[name="${approvedMapping.newTarget}"]`,
+      newSelector: `role=${role}[name="${approvedMapping.newTarget}"]`,
       resolutionStrategy: "approved_memory",
       confidence: 1,
       estimatedCostUsd: 0,
@@ -78,7 +84,7 @@ export async function resolveButton(page, targetName) {
 
   const accessibilityAttempt = {
     tier: "accessibility_text_similarity",
-    description: `Search accessibility snapshot for a button similar to "${targetName}"`,
+    description: `Search accessibility snapshot for a button or link similar to "${targetName}"`,
     estimatedCostUsd: 0,
     confidence: 0,
     status: "failed",
@@ -86,7 +92,7 @@ export async function resolveButton(page, targetName) {
 
   const snapshot = await extractAccessibilitySnapshot(page);
   const buttonCandidates = snapshot.filter(
-    (element) => element.role === "button",
+    (element) => ["button", "link"].includes(element.role) && element.name,
   );
 
   const scoredCandidates = buttonCandidates
@@ -109,24 +115,29 @@ export async function resolveButton(page, targetName) {
   }
 
   if (bestCandidate && bestCandidate.score >= 0.8) {
-    const healedLocator = page.getByRole("button", {
-      name: bestCandidate.name,
-    });
+    let healedLocator;
+    try {
+      healedLocator = await findRoleLocator(page, bestCandidate.role, bestCandidate.name);
+    } catch (error) {
+      accessibilityAttempt.errorMessage = error.message;
+    }
 
-    accessibilityAttempt.status = "passed";
-    attempts.push(accessibilityAttempt);
+    if (healedLocator) {
+      accessibilityAttempt.status = "passed";
+      attempts.push(accessibilityAttempt);
 
-    return {
-      locator: healedLocator,
-      selectorUsed: `role=button[name="${bestCandidate.name}"]`,
-      wasHealed: true,
-      oldSelector: `role=button[name="${targetName}"]`,
-      newSelector: `role=button[name="${bestCandidate.name}"]`,
-      resolutionStrategy: "accessibility_text_similarity",
-      confidence: bestCandidate.score,
-      estimatedCostUsd: 0,
-      attempts,
-    };
+      return {
+        locator: healedLocator,
+        selectorUsed: `role=${bestCandidate.role}[name="${bestCandidate.name}"]`,
+        wasHealed: true,
+        oldSelector: `role=button[name="${targetName}"]`,
+        newSelector: `role=${bestCandidate.role}[name="${bestCandidate.name}"]`,
+        resolutionStrategy: "accessibility_text_similarity",
+        confidence: bestCandidate.score,
+        estimatedCostUsd: 0,
+        attempts,
+      };
+    }
   }
 
   attempts.push(accessibilityAttempt);
@@ -151,6 +162,10 @@ export async function resolveButton(page, targetName) {
   function scoreButtonCandidate(expected, actual) {
     const normalizedExpected = normalizeText(expected);
     const normalizedActual = normalizeText(actual);
+
+    if (!normalizedExpected || !normalizedActual) {
+      return 0;
+    }
 
     if (normalizedExpected === normalizedActual) {
       return 1;
@@ -196,6 +211,31 @@ export async function resolveButton(page, targetName) {
   function normalizeText(value) {
     return value.trim().toLowerCase().replace(/\s+/g, " ");
   }
+}
+
+async function findInteractive(page, name) {
+  for (const role of ["button", "link"]) {
+    try {
+      const locator = await findRoleLocator(page, role, name);
+      return { locator, role };
+    } catch (error) {
+      if (role === "link") throw error;
+    }
+  }
+}
+
+async function findRoleLocator(page, role, name) {
+  const locator = page.getByRole(role, { name, exact: true }).and(page.locator(":visible"));
+  await locator.first().waitFor({ state: "visible", timeout: 1000 });
+  if (await locator.count() > 1) {
+    const destinations = await locator.evaluateAll((elements) => elements.map((element) =>
+      element.getAttribute("href") ? new URL(element.getAttribute("href"), element.baseURI).href : null,
+    ));
+    if (role !== "link" || destinations.includes(null) || new Set(destinations).size !== 1) {
+      throw new Error(`Ambiguous ${role} target "${name}"`);
+    }
+  }
+  return locator.first();
 }
 
 async function simulateVisionFallback(targetName, snapshot) {

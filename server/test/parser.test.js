@@ -41,3 +41,13 @@ test("rejects unsupported instructions before browser execution", () => {
 test("requires at least one instruction", () => {
   assert.throws(() => parseInstruction("\n\n"), /At least one instruction/);
 });
+
+test("parses navigation to links on an explicit website", () => {
+  assert.deepEqual(parseInstruction("goto projects on https://bimarshakhanal.com.np/"), [
+    { action: "goto", target: "https://bimarshakhanal.com.np/" },
+    { action: "goto", target: "projects" },
+  ]);
+  assert.deepEqual(parseInstruction("Navigate to Projects."), [
+    { action: "goto", target: "Projects" },
+  ]);
+});

@@ -41,6 +41,7 @@ class AccessibilityNode:
 
     # source
     source: str                 # button | link | input | select
+    href: str | None = None
 
 
 @dataclass
@@ -202,6 +203,7 @@ async def extract_accessibility_tree(page: Page) -> AccessibilitySnapshot | None
                             focusable:  isFocusable(el),
                             disabled:   el.disabled || false,
                             aria:       getAriaAttributes(el),
+                            href:       el.hasAttribute("href") ? el.href : null,
                             source,
                         };
                     });
@@ -219,7 +221,7 @@ async def extract_accessibility_tree(page: Page) -> AccessibilitySnapshot | None
                 // deduplicate by selector + role
                 const seen = new Set();
                 return nodes.filter(node => {
-                    const key = `${node.role}::${node.selector}::${node.name}`;
+                    const key = `${node.role}::${node.selector}::${node.name}::${node.href || ""}::${node.visible}`;
                     if (seen.has(key)) return false;
                     seen.add(key);
                     return true;
@@ -256,6 +258,7 @@ async def extract_accessibility_tree(page: Page) -> AccessibilitySnapshot | None
                 disabled=r["disabled"],
                 aria=aria,
                 source=r["source"],
+                href=r.get("href"),
             ))
 
         # ── compute summary ───────────────────────────────────────────────
