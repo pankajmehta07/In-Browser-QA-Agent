@@ -228,6 +228,8 @@ async def process_natural_language_instruction(
         known_urls.add(explicit_url)
     feedback = None
     research_only = False
+    snapshot_cache: dict = {}
+    after_action = False
 
     for _ in range(max_actions + 1):
         snapshot = await extract_accessibility_tree(session.page)
@@ -257,13 +259,17 @@ async def process_natural_language_instruction(
                 "actions": action_history,
                 "feedback": feedback,
             }
-            response = await respond_to_instruction(
+            response, snapshot_cache = await respond_to_instruction(
                 instruction, snapshot, page_title, page_text,
                 (conversation_history or [])[-12:], agent_context,
+                snapshot_cache=snapshot_cache,
+                after_action=after_action,
             )
         except Exception as error:
             log_error(f"Could not interpret the instruction or read page evidence: {error}")
             return
+
+        after_action = False 
 
         if response.kind in ("answer", "done"):
             if any(url not in evidence for url in response.sources):
@@ -326,6 +332,7 @@ async def process_natural_language_instruction(
 
         log_info(f"Agent action {len(action_history) + 1}/{max_actions}: {step.action} {step.target}")
         run_result, root_cause = await run_steps(session.page, [step])
+        after_action = True 
         print_run_result(run_result)
         action_history.append({
             "url_before": fingerprint[0],

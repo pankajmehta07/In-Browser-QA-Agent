@@ -9,13 +9,13 @@ from dataclasses import dataclass, field
 
 from groq import AsyncGroq, RateLimitError
 
-from extractors.accessibility import AccessibilitySnapshot
+from extractors.accessibility import AccessibilitySnapshot, AccessibilityNode
 from utils.logger import log_info
 
 
 GROQ_TOKENS_PER_MINUTE = 8000
 GROQ_MAX_INPUT_TOKENS = 6000
-GROQ_MAX_OUTPUT_TOKENS = 1000
+GROQ_MAX_OUTPUT_TOKENS = 2000
 _groq_requests: deque[tuple[float, int]] = deque()
 _groq_lock = asyncio.Lock()
 
@@ -114,34 +114,131 @@ class InstructionResponse:
     sources: list[str] = field(default_factory=list)
 
 
-async def respond_to_instruction(
-    instruction: str,
-    snapshot: AccessibilitySnapshot,
-    page_title: str,
-    page_text: str,
-    conversation_history: list[dict[str, str]] | None = None,
-    agent_context: dict | None = None,
-) -> InstructionResponse:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set in the environment.")
+# ── snapshot cache ─────────────────────────────────────────────────────────────
 
-    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    page_context = {
-        "url": snapshot.url,
-        "title": page_title,
-        "visible_page_text": page_text[:12000],
-        "links": [
-            {"name": node.name, "url": node.href, "visible": node.visible}
-            for node in snapshot.nodes
-            if node.role == "link" and node.href
-            and node.href.startswith(("http://", "https://"))
-        ][:200],
+@dataclass
+class _CachedSnapshot:
+    snapshot:    AccessibilitySnapshot
+    fingerprint: frozenset  # used for diffing
+
+
+def _build_fingerprint(snapshot: AccessibilitySnapshot) -> frozenset:
+    """
+    Build a hashable fingerprint of the snapshot.
+    Captures role, name, disabled state per node.
+    Changes to any of these indicate a DOM update.
+    """
+    return frozenset(
+        (node.role, node.name, node.disabled, node.visible)
+        for node in snapshot.nodes
+    )
+
+
+def _diff_snapshots(
+    old: AccessibilitySnapshot,
+    new: AccessibilitySnapshot,
+) -> bool:
+    """
+    Compare two snapshots and return if they differ (True) or not (False).
+    """
+    old_nodes = {
+        (n.role, n.selector): n
+        for n in old.nodes
+    }
+    new_nodes = {
+        (n.role, n.selector): n
+        for n in new.nodes
+    }
+
+    appeared  = []
+    disappeared = []
+    changed   = []
+
+    # nodes that appeared
+    for key, node in new_nodes.items():
+        if key not in old_nodes:
+            appeared.append({"role": node.role, "name": node.name, "selector": node.selector})
+
+    # nodes that disappeared
+    for key, node in old_nodes.items():
+        if key not in new_nodes:
+            disappeared.append({"role": node.role, "name": node.name, "selector": node.selector})
+
+    # nodes that changed name, disabled or visible state
+    for key, new_node in new_nodes.items():
+        old_node = old_nodes.get(key)
+        if not old_node:
+            continue
+        changes = {}
+        if old_node.name != new_node.name:
+            changes["name"] = {"from": old_node.name, "to": new_node.name}
+        if old_node.disabled != new_node.disabled:
+            changes["disabled"] = {"from": old_node.disabled, "to": new_node.disabled}
+        if old_node.visible != new_node.visible:
+            changes["visible"] = {"from": old_node.visible, "to": new_node.visible}
+        if changes:
+            changed.append({
+                "role":     new_node.role,
+                "selector": new_node.selector,
+                "changes":  changes,
+            })
+
+    return bool(appeared or disappeared or changed)
+
+
+def _build_snapshot_context(
+    snapshot:      AccessibilitySnapshot,
+    cache:         dict[str, _CachedSnapshot],
+    url:           str,
+    after_action:  bool,
+) -> tuple[dict, dict[str, _CachedSnapshot]]:
+    """
+    Decide what snapshot context to send to Groq.
+
+    Returns (context_dict, updated_cache).
+
+    Logic:
+      First visit          → send full snapshot, cache it
+      Same URL, no change  → send summary only
+      Same URL, changed    → send full fresh snapshot
+      New URL              → send full snapshot, cache it
+    """
+    new_fingerprint = _build_fingerprint(snapshot)
+    cached          = cache.get(url)
+
+    # first visit to this URL
+    if not cached:
+        updated_cache = {
+            **cache,
+            url: _CachedSnapshot(snapshot=snapshot, fingerprint=new_fingerprint),
+        }
+        return _full_snapshot_context(snapshot), updated_cache
+
+    # same URL — check if DOM changed
+    if after_action:
+        has_changes = new_fingerprint != cached.fingerprint
+
+        if has_changes:
+            # DOM changed after action — send full fresh snapshot
+            updated_cache = {
+                **cache,
+                url: _CachedSnapshot(snapshot=snapshot, fingerprint=new_fingerprint),
+            }
+            return _full_snapshot_context(snapshot), updated_cache
+
+    # nothing changed — send summary only
+    return _summary_snapshot_context(snapshot), cache
+
+
+def _full_snapshot_context(snapshot: AccessibilitySnapshot) -> dict:
+    return {
+        "cached":      False,
+        "total_nodes": snapshot.total_count,
         "interactive_elements": [
             {
-                "role": node.role,
-                "name": node.name,
-                "visible": node.visible,
+                "role":     node.role,
+                "name":     node.name,
+                "visible":  node.visible,
                 "disabled": node.disabled,
                 "required": node.aria.required,
             }
@@ -150,6 +247,58 @@ async def respond_to_instruction(
         ][:100],
     }
 
+
+def _summary_snapshot_context(snapshot: AccessibilitySnapshot) -> dict:
+    return {
+        "cached":      True,
+        "note": (
+            "DOM unchanged since last snapshot — "
+            "interactive elements are the same as before."
+        ),
+    }
+
+
+async def respond_to_instruction(
+    instruction:          str,
+    snapshot:             AccessibilitySnapshot,
+    page_title:           str,
+    page_text:            str,
+    conversation_history: list[dict[str, str]] | None = None,
+    agent_context:        dict | None = None,
+    snapshot_cache:       dict[str, _CachedSnapshot] | None = None,
+    after_action:         bool = False,
+) -> tuple[InstructionResponse, dict[str, _CachedSnapshot]]:
+    """
+    Returns (InstructionResponse, updated_snapshot_cache).
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not set in the environment.")
+
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    
+    # build snapshot context — full or summary depending on cache state
+    cache = snapshot_cache or {}
+    snapshot_ctx, updated_cache = _build_snapshot_context(
+        snapshot=snapshot,
+        cache=cache,
+        url=snapshot.url,
+        after_action=after_action,
+    )
+
+    page_context = {
+        "url":   snapshot.url,
+        "title": page_title,
+        "visible_page_text": page_text[:4000],
+        "links": [
+            {"name": node.name, "url": node.href, "visible": node.visible}
+            for node in snapshot.nodes
+            if node.role == "link"
+            and node.href
+            and node.href.startswith(("http://", "https://"))
+        ][:100],
+        "snapshot": snapshot_ctx,
+    }
     history = list(conversation_history or [])
     progress = copy.deepcopy(agent_context or {})
 
@@ -193,9 +342,13 @@ async def respond_to_instruction(
             page_context["visible_page_text"] = page_context["visible_page_text"][:
                 max(512, len(page_context["visible_page_text"]) // 2)
             ]
-        elif len(page_context["interactive_elements"]) > 10:
-            page_context["interactive_elements"] = page_context["interactive_elements"][:
-                max(10, len(page_context["interactive_elements"]) // 2)
+        elif (
+            not page_context["snapshot"].get("cached")
+            and len(page_context["snapshot"].get("interactive_elements", [])) > 10
+        ):
+            elements = page_context["snapshot"]["interactive_elements"]
+            page_context["snapshot"]["interactive_elements"] = elements[
+                :max(10, len(elements) // 2)
             ]
         elif len(page_context["links"]) > 10:
             page_context["links"] = page_context["links"][:max(10, len(page_context["links"]) // 2)]
@@ -205,8 +358,11 @@ async def respond_to_instruction(
             previous_pages.pop(0)
         elif progress:
             progress.clear()
-        elif page_context["interactive_elements"]:
-            page_context["interactive_elements"].pop()
+        elif (
+            not page_context["snapshot"].get("cached")
+            and page_context["snapshot"].get("interactive_elements")
+        ):
+            page_context["snapshot"]["interactive_elements"].pop()
         elif page_context["links"]:
             page_context["links"].pop()
         elif page_context["visible_page_text"]:
@@ -222,7 +378,6 @@ async def respond_to_instruction(
     log_info(f"Asking Groq ({model}) to interpret the instruction...")
     response = await _budgeted_completion(
         api_key, model, messages,
-        response_format={"type": "json_object"},
         temperature=0.1,
         reasoning_effort="low",
     )
@@ -252,14 +407,14 @@ async def respond_to_instruction(
             answer=answer.strip(),
             history_content=content,
             sources=sources,
-        )
+        ), updated_cache
 
     if kind in ("test", "browse") and isinstance(payload.get("steps"), list):
         return InstructionResponse(
             kind=kind,
             steps_json=json.dumps(payload["steps"]),
             history_content=content,
-        )
+        ), updated_cache
 
     raise ValueError('Groq response must have kind "answer", "browse", "test", or "done" with valid fields.')
 

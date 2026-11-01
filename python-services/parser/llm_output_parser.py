@@ -113,6 +113,7 @@ def _clean_raw_input(raw: str) -> tuple[str | None, str | None]:
     Recovery labels:
       None              — input was already clean
       markdown_stripped — removed markdown fences
+      extracted_from_prose — JSON object or array embedded anywhere in prose
     """
     stripped = raw.strip()
 
@@ -132,6 +133,15 @@ def _clean_raw_input(raw: str) -> tuple[str | None, str | None]:
         extracted = match.group(1).strip()
         log_warning("Markdown fences detected — stripping them.")
         return extracted, "markdown_stripped"
+
+    # JSON object or array embedded anywhere in prose
+    # e.g. "Here is my plan: {...}" or "The steps are: [...]"
+    embedded_pattern = re.compile(r"(\{[\s\S]*\}|\[[\s\S]*\])")
+    match = embedded_pattern.search(stripped)
+    if match:
+        extracted = match.group(1).strip()
+        log_warning("JSON extracted from prose response.")
+        return extracted, "extracted_from_prose"
 
     return None, None
 

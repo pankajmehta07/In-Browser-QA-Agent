@@ -333,8 +333,8 @@ Supported sentence patterns:
 | Assertion | `Check that ... is unchecked` | `Check that Weekly digest is unchecked.` |
 
 Navigation and click actions resolve both buttons and links by accessible name.
-`goto Projects on https://bimarshakhanal.com.np/` opens the website and follows
-its Projects link. Duplicate visible links are accepted only when they point
+`goto faculty on https://doece.tcioe.edu.np/` opens the website and follows
+its faculty link. Duplicate visible links are accepted only when they point
 to the same resolved URL; links with conflicting destinations remain ambiguous.
 Use `Check that ... is visible` for assertions rather than navigation.
 
@@ -346,8 +346,8 @@ To navigate the example website using the container:
 
 ```sh
 docker compose run --rm --no-deps python-services python cli/run.py run-natural-language \
-  --url https://bimarshakhanal.com.np/ \
-  --instruction "goto projects on https://bimarshakhanal.com.np/"
+  --url https://goto faculty on https://doece.tcioe.edu.np// \
+  --instruction "goto faculty on https://doece.tcioe.edu.np/"
 ```
 
 ### Python CLI: Natural-Language Mode
