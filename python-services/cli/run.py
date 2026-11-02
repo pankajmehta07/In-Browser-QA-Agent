@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from core.browser import launch_browser, navigate_to, close_browser, take_screenshot
 from core.auditor import run_full_audit
+from core.page_monitor import PageMonitor, PageState, collect_invalid_fields, diff_page_states
 from core.runner import run_test, TestRunReport
 
 from extractors.page_content import extract_page_content
@@ -232,6 +233,9 @@ async def process_natural_language_instruction(
         known_urls.add(explicit_url)
     feedback = None
     # research_only = False
+    monitor = session_state.get("monitor")
+    if monitor is None or monitor.page is not session.page:
+        monitor = session_state["monitor"] = PageMonitor(session.page)
 
     for _ in range(max_actions + 1):
         snapshot = await extract_accessibility_tree(session.page)
@@ -242,6 +246,17 @@ async def process_natural_language_instruction(
         try:
             page_title = await session.page.title()
             page_text = await session.page.locator("body").inner_text(timeout=5000)
+        except Exception as error:
+            log_warning(f"Could not read page text; asking the LLM to replan with the browser error: {error}")
+            page_title, page_text = "", ""
+            feedback = " ".join(filter(None, [
+                feedback,
+                f"Reading the current page failed with this browser error: {_clean_browser_error(error)}. "
+                "Page text is unavailable for this step; rely on the interactive elements, wait_for_change, "
+                "or finish honestly.",
+            ]))
+
+        try:
             evidence[session.page.url] = {
                 "url": session.page.url,
                 "title": page_title,
@@ -259,6 +274,7 @@ async def process_natural_language_instruction(
                     page for url, page in evidence.items() if url != session.page.url
                 ][-5:],
                 "actions": session_actions[-8:],
+                "browser_events_since_last_action": monitor.drain(),
                 "feedback": feedback,
             }
             response, _ = await respond_to_instruction(
@@ -266,7 +282,7 @@ async def process_natural_language_instruction(
                 (conversation_history or [])[-12:], agent_context,
             )
         except Exception as error:
-            log_error(f"Could not interpret the instruction or read page evidence: {error}")
+            log_error(f"Could not interpret the instruction: {error}")
             return
 
         if response.kind in ("answer", "done"):
@@ -315,6 +331,9 @@ async def process_natural_language_instruction(
 
         page_changed = False
         plan_failed = False
+        events_seen = False
+        navigated = False
+        state_before = PageState(session.page.url, page_title, page_text, snapshot)
         for step in parse_result.steps:
             target_url = urlsplit(step.target)
             if step.action == "goto" and target_url.scheme:
@@ -331,7 +350,7 @@ async def process_natural_language_instruction(
 
             url_before = session.page.url
             fingerprint = (url_before, step.action, step.target, step.value)
-            if fingerprint in attempted_actions:
+            if fingerprint in attempted_actions and step.action != "wait_for_change":
                 feedback = "That action was already attempted on this page. Choose another observed route or finish honestly."
                 plan_failed = True
                 break
@@ -341,12 +360,36 @@ async def process_natural_language_instruction(
             run_result, root_cause = await run_steps(
                 session.page, [step], allow_llm_fallback=False,
             )
+            await monitor.settle()
             print_run_result(run_result)
+
+            observation: dict = {"browser_events": monitor.drain()}
+            if session.page.url == url_before:
+                state_after = await _capture_page_state(session.page)
+                if state_after is not None:
+                    observation["page_changes"] = diff_page_states(state_before, state_after)
+                    state_before = state_after
+                    evidence[session.page.url] = {
+                        "url": state_after.url,
+                        "title": state_after.title,
+                        "text": state_after.text[:8000],
+                    }
+                # Native validation bubbles are not in the DOM, so report field validity after clicks.
+                if step.action == "click":
+                    observation["invalid_fields"] = await collect_invalid_fields(session.page)
+            observation = {key: value for key, value in observation.items() if value}
+            if observation:
+                _log_observation(observation)
+
             action_record = {
                 "url_before": url_before,
                 "url_after": session.page.url,
                 "result": asdict(run_result.steps[0]),
             }
+            if action_record["result"].get("error"):
+                action_record["result"]["error"] = _clean_browser_error(action_record["result"]["error"])
+            if observation:
+                action_record["observation"] = observation
             action_history.append(action_record)
             session_actions.append(action_record)
             del session_actions[:-8]
@@ -354,31 +397,55 @@ async def process_natural_language_instruction(
             if root_cause:
                 print_root_cause(root_cause)
             if run_result.status != "passed":
-                feedback = "The last action failed. Use the recorded error and fresh page evidence to recover."
+                failed = run_result.steps[0]
+                log_info("Sending the browser error to the LLM to replan.")
+                feedback = (
+                    f"The last action ({failed.action} {failed.target!r}) failed with this browser error: "
+                    f"{_clean_browser_error(failed.error or 'unknown error')}. Replan from the fresh page evidence "
+                    "and do not repeat the identical action. If the error lists several matching elements "
+                    "(strict mode violation), retarget the intended one by its exact, distinguishing accessible "
+                    "name (for example the field 'Your password' rather than the shared word 'Password'). If "
+                    "the element is missing, hidden, or disabled, choose another observed control, wait_for_change, "
+                    "or finish with done explaining the failure."
+                )
                 plan_failed = True
                 break
 
             if session.page.url != url_before:
                 feedback = "Navigation completed. Inspect the destination page before planning further actions."
                 page_changed = True
+                navigated = True
                 break
 
-            next_snapshot = await extract_accessibility_tree(session.page)
-            next_title = await session.page.title()
-            next_text = await session.page.locator("body").inner_text(timeout=5000)
-            evidence[session.page.url] = {
-                "url": session.page.url,
-                "title": next_title,
-                "text": next_text[:8000],
-            }
-            if _page_state_signature(snapshot, page_title, page_text) != _page_state_signature(
-                next_snapshot, next_title, next_text,
-            ):
-                feedback = "The page changed after the last action. Re-evaluate the fresh page evidence before continuing."
+            if observation.get("page_changes") or observation.get("invalid_fields"):
                 page_changed = True
-                # break
+            if observation.get("browser_events"):
+                events_seen = True
 
-        if page_changed or plan_failed:
+        ended_with_assertion = bool(action_history) and action_history[-1]["result"]["action"] in (
+            "check_visible", "check_contains",
+        )
+        needs_verification = (
+            response.kind == "test" and not (plan_failed or navigated)
+            and (page_changed or events_seen or not ended_with_assertion)
+        )
+        if needs_verification:
+            if page_changed or events_seen:
+                feedback = (
+                    "The executed actions changed the page, flagged invalid fields, or produced browser events; "
+                    "see actions[].observation. Verify the outcome against that evidence. If a result is still "
+                    "pending (for example a 'Sending...' or loading state), use wait_for_change; otherwise finish "
+                    "with done and report the success message, validation errors, alerts, or console/network "
+                    "errors observed."
+                )
+            else:
+                feedback = (
+                    "The actions completed without any observable page change, invalid fields, or browser events, "
+                    "and the plan did not assert an outcome. If a response is expected, use wait_for_change or "
+                    "check_visible to verify it; otherwise finish with done stating that no visible response "
+                    "was observed."
+                )
+        if page_changed or plan_failed or events_seen or needs_verification:
             continue
         if response.kind == "browse":
             log_warning("Navigation did not change the page; stopping to avoid repeating the same request.")
@@ -402,18 +469,37 @@ async def process_natural_language_instruction(
     console.print(f"Last page: {session.page.url}", markup=False)
 
 
-def _page_state_signature(snapshot, page_title: str, page_text: str) -> tuple:
-    if snapshot is None:
-        return ()
-    return (
-        snapshot.url,
-        page_title,
-        page_text,
-        tuple(
-            (node.role, node.name, node.visible, node.disabled, node.href)
-            for node in snapshot.nodes
-        ),
-    )
+def _clean_browser_error(error) -> str:
+    # Playwright appends a verbose call log; the message and matched-element list precede it.
+    return str(error).split("Call log:", 1)[0].strip()[:1500]
+
+
+async def _capture_page_state(page) -> PageState | None:
+    try:
+        snapshot = await extract_accessibility_tree(page)
+        title = await page.title()
+        text = await page.locator("body").inner_text(timeout=5000)
+    except Exception as error:
+        log_warning(f"Could not read page state after the action: {error}")
+        return None
+    return PageState(page.url, title, text, snapshot)
+
+
+def _log_observation(observation: dict):
+    changes = observation.get("page_changes", {})
+    for item in changes.get("elements_changed", []):
+        details = ", ".join(
+            f"{field}: {item[field]['from']!r} -> {item[field]['to']!r}"
+            for field in ("name", "disabled", "visible") if field in item
+        )
+        log_info(f"Observed {item['role']} '{item['name']}' change ({details})")
+    for line in changes.get("text_added", []):
+        log_info(f"Observed new text: {line}")
+    for field in observation.get("invalid_fields", []):
+        log_info(f"Observed invalid field '{field['field']}': {field['message']}")
+    for event in observation.get("browser_events", []):
+        detail = event.get("text") or f"{event.get('method')} {event.get('url')} {event.get('status') or event.get('error') or ''}"
+        log_info(f"Observed {event['type']}: {detail}")
 
 
 async def cmd_run_natural_language(

@@ -6,7 +6,7 @@ from utils.logger import log_info, log_success, log_warning, log_error
 
 
 # valid actions the runner supports
-VALID_ACTIONS = {"goto", "type", "click", "check_visible", "check_contains"}
+VALID_ACTIONS = {"goto", "type", "click", "check_visible", "check_contains", "wait_for_change"}
 
 # actions that require a value field
 ACTIONS_WITH_VALUE = {"type", "check_contains"}

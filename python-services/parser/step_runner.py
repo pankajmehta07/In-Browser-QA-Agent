@@ -7,6 +7,7 @@ from utils.logger import log_info, log_success, log_error, log_warning
 
 from core.root_cause import explain_failure, RootCause
 from core.resolver import resolve_button, ResolutionResult, find_interactive_locator
+from core.page_monitor import wait_for_page_change
 
 
 # known URL targets for goto action
@@ -112,6 +113,8 @@ async def _execute_step(
             extra = await _action_check_visible(page, step.target)
         elif step.action == "check_contains":
             extra = await _action_check_contains(page, step.target, step.value or "")
+        elif step.action == "wait_for_change":
+            extra = await _action_wait_for_change(page, step.value)
         else:
             raise ValueError(f"Unsupported action: {step.action}")
 
@@ -260,3 +263,19 @@ async def _action_check_contains(page: Page, target: str, value: str) -> dict:
     await expect(field).to_have_value(value, timeout=5000)
 
     return {"selector_used": f"label={target}"}
+
+
+async def _action_wait_for_change(page: Page, value: str | None) -> dict:
+    """
+    Wait (default 10s, max 30s) for the page to change and settle,
+    e.g. a 'Sending...' button turning into a success or error message.
+    """
+    try:
+        seconds = float(value) if value else 10.0
+    except ValueError:
+        seconds = 10.0
+    seconds = min(max(seconds, 1.0), 30.0)
+
+    if not await wait_for_page_change(page, seconds):
+        raise TimeoutError(f"No page change observed within {seconds:g}s.")
+    return {}

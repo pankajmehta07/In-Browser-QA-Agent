@@ -355,16 +355,17 @@ docker compose run --rm --no-deps python-services python cli/run.py run-natural-
 The Python CLI uses an LLM to work toward a natural-language question or QA goal.
 It sends page text, interactive elements, discovered link destinations, and
 action feedback to the model, executes one action, then reads the page and replans.
-The free tiers of three OpenAI-compatible providers are supported:
+The free tiers of three providers are supported, called through the
+[LiteLLM](https://docs.litellm.ai/) router:
 
-| Provider | `--provider` | Key variable | Model variable (default) |
-| --- | --- | --- | --- |
-| Google AI Studio | `google` | `GEMINI_API_KEY` | `GEMINI_MODEL` (`gemini-2.5-flash`) |
-| Groq | `groq` | `GROQ_API_KEY` | `GROQ_MODEL` (`openai/gpt-oss-120b`) |
-| NVIDIA | `nvidia` | `NVIDIA_API_KEY` | `NVIDIA_MODEL` (`meta/llama-3.3-70b-instruct`) |
+| Provider | `--provider` | Key variable | Model variable (code default) | Fallback model variable (code default) |
+| --- | --- | --- | --- | --- |
+| Google AI Studio | `google` | `GEMINI_API_KEY` | `GEMINI_MODEL` (`gemini-3.6-flash`) | `GEMINI_FALLBACK_MODEL` (`gemini-3.5-flash-lite`) |
+| Groq | `groq` | `GROQ_API_KEY` | `GROQ_MODEL` (`openai/gpt-oss-120b`) | `GROQ_FALLBACK_MODEL` (`openai/gpt-oss-20b`) |
+| NVIDIA | `nvidia` | `NVIDIA_API_KEY` | `NVIDIA_MODEL` (`mistralai/mistral-large-4-1t-a52b`) | `NVIDIA_FALLBACK_MODEL` (same) |
 
 Add the key for at least one provider to the root `.env`, then rebuild the
-Python service so the OpenAI SDK is installed:
+Python service so LiteLLM is installed:
 
 ```sh
 docker compose up -d --build python-services
@@ -406,32 +407,20 @@ supplied by the user; it does not authorize form submission or state-changing
 interactions. The agent reports when it cannot finish rather than inventing
 missing facts.
 
-Each provider has a local rolling-minute budget within each CLI process,
-including selector-healing calls: Groq 8,000 tokens and 30 requests with a
-6,000-token input cap; Google AI Studio 250,000 tokens and 10 requests with a
-30,000-token input cap; NVIDIA 40 requests with a 30,000-token input cap.
-The Groq details below describe the default provider.
-
-Groq calls share an 8,000-token rolling-minute budget within each CLI process,
-including selector-healing calls. Requests reserve approximately estimated
-input tokens plus the maximum output, then use reported usage when available.
-Input estimation uses one token per three UTF-8 bytes plus message overhead,
-not one token per byte and not an exact model tokenizer. Provider rate limits
-remain authoritative when this estimate differs from actual token usage.
-The agent trims older context to a 6,000-token estimated input cap, limits
-planner responses to 1,000 tokens, and waits when the minute budget is exhausted.
-Provider rate-limit responses trigger a cooldown and one retry. Separate CLI
-processes or other applications using the same API key share Groq's account
-quota, but not this local budget. The system prompt stays at the start of each
-request so Groq can reuse a stable prompt prefix. Groq automatically caches
-matching prefixes for supported models, including the default
-`openai/gpt-oss-120b`; cache hits are not guaranteed and expire after two hours
-without use. Cached input tokens receive a 50% price discount and do not count
-toward Groq rate limits. The CLI logs reported cached prompt tokens and subtracts
-them from its rolling rate-budget accounting after each response. It still
-reserves the full estimated input before a request because a cache hit is not
-guaranteed. Prompt caching reduces processing cost and latency; it does not
-preserve conversation state between requests.
+The chosen provider's model is always tried first. On a rate limit (429),
+server error such as 503, timeout (90 seconds), or a prompt that exceeds a
+model's input cap, LiteLLM retries where useful and then falls back in order:
+the chosen provider's fallback model, then every other provider whose key is
+set (its model, then its fallback model). The CLI logs the routing order at the
+first request and warns whenever a fallback answers. Failing models are cooled
+down for 30 seconds. Set `LLM_CROSS_PROVIDER_FALLBACK=false` to stay on the
+chosen provider. Prompt trimming uses the chosen provider's input cap: Groq
+6,000 estimated tokens, Google AI Studio and NVIDIA 30,000. Input estimation
+uses one token per three UTF-8 bytes plus message overhead, not an exact model
+tokenizer. The CLI logs reported usage, including cached prompt tokens. Groq
+and Gemini cache matching prompt prefixes automatically, so the system prompt
+stays at the start of each request; caching reduces cost and latency but does
+not preserve conversation state between requests.
 
 For example, asking `Who are the deputy HODs of the department on https://doece.tcioe.edu.np/`
 lets the agent choose relevant staff or administration links instead of limiting
@@ -440,7 +429,16 @@ its answer to the homepage. Answers depend on what the website actually exposes.
 Use `--dry-run` to inspect the next proposed action without executing it;
 later actions depend on fresh page evidence. Set the provider's model variable
 in `.env` to choose a different model. Natural-language mode currently supports `click`,
-`type`, `check_visible`, `check_contains`, and `goto` actions.
+`type`, `check_visible`, `check_contains`, `goto`, and `wait_for_change` actions.
+
+After each action the agent records an observation: a diff of the interactive
+elements and page text (for example a button changing from `Send` to
+`Sending...`), plus browser events such as console messages, page errors,
+alerts, failed requests, and the HTTP status of form or API requests. When an
+action batch changes the page or produces events, the model reviews this
+evidence and can request `wait_for_change` (value: maximum seconds, default 10,
+max 30) to wait for a pending result before reporting the outcome. Alerts and
+confirms are accepted automatically; prompts are dismissed.
 
 ### Expanded Playground Scenario
 

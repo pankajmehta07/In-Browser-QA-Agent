@@ -18,6 +18,52 @@ class BrowserSession:
     page: Page
     xvfb_process: subprocess.Popen | None = None
 
+# Runs in every page before site scripts. Defuses common "devtools open" /
+# automation detectors that warn, redirect, or block the page:
+#   - navigator.webdriver: Playwright exposes it; many sites hard-block on it.
+#   - console.clear spam: detectors wipe the console to hide their probes.
+#   - getter/toString trap probes: detectors console.log an object whose
+#     accessor fires when the console serializes it. Our console listener
+#     keeps the CDP Runtime domain enabled, so serialization happens and the
+#     site thinks DevTools is open. We drop such probe objects before logging.
+_STEALTH_INIT_SCRIPT = """
+(() => {
+  try {
+    Object.defineProperty(Navigator.prototype, "webdriver", {
+      get: () => undefined,
+      configurable: true,
+    });
+  } catch (e) {}
+
+  try { console.clear = () => undefined; } catch (e) {}
+
+  const isProbe = (arg) => {
+    if (arg === null) return false;
+    const type = typeof arg;
+    if (type === "function") return Object.prototype.hasOwnProperty.call(arg, "toString");
+    if (type !== "object") return false;
+    if (arg instanceof RegExp || arg instanceof Date || arg instanceof Error) {
+      return Object.prototype.hasOwnProperty.call(arg, "toString");
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(arg);
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof descriptors[key].get === "function") return true;
+    }
+    return Object.prototype.hasOwnProperty.call(arg, "toString");
+  };
+
+  for (const method of ["log", "debug", "info", "warn", "error", "table", "dir", "dirxml"]) {
+    const original = console[method];
+    if (typeof original !== "function") continue;
+    console[method] = function (...args) {
+      if (args.some(isProbe)) return undefined;
+      return original.apply(this, args);
+    };
+  }
+})();
+"""
+
+
 def start_xvfb(display: str = ":99") -> subprocess.Popen:
     """
     Start a virtual display using Xvfb.
@@ -73,10 +119,18 @@ async def launch_browser(headless: bool = True) -> BrowserSession:
 
     browser = await playwright.chromium.launch(
         headless=headless,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",],
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            # Stops Chromium from flagging itself as automated
+            # (navigator.webdriver and related Blink signals).
+            "--disable-blink-features=AutomationControlled",
+        ],
     )
 
     page = await browser.new_page()
+    await page.add_init_script(_STEALTH_INIT_SCRIPT)
 
     log_success("Browser launched successfully.")
 

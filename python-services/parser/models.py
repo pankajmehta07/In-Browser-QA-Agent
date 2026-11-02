@@ -3,9 +3,9 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ParsedStep:
-    action: str           # goto | type | click | check_visible | check_contains
+    action: str           # goto | type | click | check_visible | check_contains | wait_for_change
     target: str
-    value: str | None = None   # only for type and check_contains
+    value: str | None = None   # type/check_contains value, or wait_for_change seconds
 
 
 @dataclass
