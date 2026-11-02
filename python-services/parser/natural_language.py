@@ -277,14 +277,16 @@ async def respond_to_instruction(
 
     model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     
-    # build snapshot context — full or summary depending on cache state
+    # build snapshot context
     cache = snapshot_cache or {}
-    snapshot_ctx, updated_cache = _build_snapshot_context(
-        snapshot=snapshot,
-        cache=cache,
-        url=snapshot.url,
-        after_action=after_action,
-    )
+    snapshot_ctx = _full_snapshot_context(snapshot)
+    updated_cache = {
+        **cache,
+        snapshot.url: _CachedSnapshot(
+            snapshot=snapshot,
+            fingerprint=_build_fingerprint(snapshot),
+        ),
+    }
 
     page_context = {
         "url":   snapshot.url,
@@ -382,9 +384,36 @@ async def respond_to_instruction(
         reasoning_effort="low",
     )
 
-    content = response.choices[0].message.content
-    if not content:
-        raise ValueError("Groq returned an empty response.")
+    if not response.choices:
+        raise ValueError(
+            "Groq returned no completion choices."
+        )
+
+    choice = response.choices[0]
+    message = choice.message
+    content = message.content
+
+    if not content or not content.strip():
+        raise ValueError(
+            "Groq returned empty content. "
+            f"finish_reason={choice.finish_reason}, "
+            f"usage={response.usage}, "
+            f"model={response.model}"
+        )
+
+    if choice.finish_reason == "length":
+        raise ValueError(
+            "Groq response was truncated because the completion "
+            "token limit was reached."
+        )
+
+    log_info(
+        f"[GROQ_RESPONSE] "
+        f"finish_reason={choice.finish_reason}, "
+        f"completion_tokens="
+        f"{response.usage.completion_tokens if response.usage else 'unknown'} "
+        f"{content}"
+    )    
 
     try:
         payload = json.loads(content)
