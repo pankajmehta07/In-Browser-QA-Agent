@@ -1,96 +1,10 @@
-import asyncio
 import copy
 import json
-import math
-import os
-import time
-from collections import deque
 from dataclasses import dataclass, field
 
-from groq import AsyncGroq, RateLimitError
-
 from extractors.accessibility import AccessibilitySnapshot, AccessibilityNode
+from parser.llm_client import budgeted_completion, estimate_input_tokens, get_provider
 from utils.logger import log_info
-
-
-GROQ_TOKENS_PER_MINUTE = 8000
-GROQ_MAX_INPUT_TOKENS = 6000
-GROQ_MAX_OUTPUT_TOKENS = 2000
-_groq_requests: deque[tuple[float, int]] = deque()
-_groq_lock = asyncio.Lock()
-
-
-def _estimate_input_tokens(messages: list[dict[str, str]]) -> int:
-    return 256 + sum(
-        16 + math.ceil(
-            (len(message["role"].encode("utf-8")) + len(message["content"].encode("utf-8"))) / 3
-        )
-        for message in messages
-    )
-
-
-async def _budgeted_completion(
-    api_key: str, model: str, messages: list[dict[str, str]],
-    max_completion_tokens: int = GROQ_MAX_OUTPUT_TOKENS, **options,
-):
-    input_tokens = _estimate_input_tokens(messages)
-    reserved_tokens = input_tokens + max_completion_tokens
-    if input_tokens > GROQ_MAX_INPUT_TOKENS or reserved_tokens > GROQ_TOKENS_PER_MINUTE:
-        raise ValueError("Groq request exceeds the estimated per-request token limit, not the rolling-minute allowance.")
-
-    async with _groq_lock:
-        async with AsyncGroq(api_key=api_key, max_retries=0) as client:
-            for attempt in range(2):
-                while True:
-                    now = time.monotonic()
-                    while _groq_requests and now - _groq_requests[0][0] >= 60:
-                        _groq_requests.popleft()
-                    if sum(tokens for _, tokens in _groq_requests) + reserved_tokens <= GROQ_TOKENS_PER_MINUTE:
-                        break
-                    wait_seconds = max(0.1, 60 - (now - _groq_requests[0][0]))
-                    log_info(f"Groq token budget reached; waiting {wait_seconds:.1f}s before the next request...")
-                    await asyncio.sleep(wait_seconds)
-
-                request_time = time.monotonic()
-                _groq_requests.append((request_time, reserved_tokens))
-                try:
-                    response = await client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        max_completion_tokens=max_completion_tokens,
-                        **options,
-                    )
-                except RateLimitError as error:
-                    if _groq_requests and _groq_requests[-1][0] == request_time:
-                        _groq_requests.pop()
-                    if attempt:
-                        raise
-                    try:
-                        wait_seconds = max(0.1, float(error.response.headers.get("retry-after", "60")))
-                    except (TypeError, ValueError):
-                        wait_seconds = 60.0
-                    log_info(f"Groq rate limit reached; waiting {wait_seconds:.1f}s before one retry...")
-                    await asyncio.sleep(wait_seconds)
-                    continue
-                except BaseException:
-                    if _groq_requests and _groq_requests[-1][0] == request_time:
-                        _groq_requests.pop()
-                    raise
-
-                if response.usage is not None:
-                    prompt_details = getattr(response.usage, "prompt_tokens_details", None)
-                    cached_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
-                    accounted_tokens = max(0, response.usage.total_tokens - cached_tokens)
-                    _groq_requests[-1] = (request_time, accounted_tokens + 256)
-                    log_info(
-                        "Groq usage: "
-                        f"prompt_tokens={response.usage.prompt_tokens}, "
-                        f"cached_prompt_tokens={cached_tokens}, "
-                        f"completion_tokens={response.usage.completion_tokens}, "
-                        f"rate_budget_tokens={accounted_tokens}"
-                    )
-                return response
-    raise RuntimeError("Groq request could not be completed within the rate limit.")
 
 
 SYSTEM_PROMPT = """You are a concise website research assistant and QA agent. Work toward the user's goal, not just the current page. Infer the necessary actions without requiring the user to supply explicit steps. You receive fresh page evidence whenever navigation, a visible page change, or a failed action requires replanning.
@@ -207,7 +121,7 @@ def _build_snapshot_context(
     after_action:  bool,
 ) -> tuple[dict, dict[str, _CachedSnapshot]]:
     """
-    Decide what snapshot context to send to Groq.
+    Decide what snapshot context to send to the LLM.
 
     Returns (context_dict, updated_cache).
 
@@ -285,12 +199,9 @@ async def respond_to_instruction(
     """
     Returns (InstructionResponse, updated_snapshot_cache).
     """
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set in the environment.")
+    provider = get_provider()
+    max_input_tokens = provider.max_input_tokens
 
-    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    
     # build snapshot context
     cache = snapshot_cache or {}
     snapshot_ctx = _full_snapshot_context(snapshot)
@@ -339,11 +250,11 @@ async def respond_to_instruction(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": instruction},
     ]
-    if _estimate_input_tokens(instruction_messages) > GROQ_MAX_INPUT_TOKENS:
+    if estimate_input_tokens(instruction_messages) > max_input_tokens:
         raise ValueError("The instruction alone exceeds the estimated per-request token limit. Split it into smaller tasks.")
 
     context_trimmed = False
-    while _estimate_input_tokens(messages) > GROQ_MAX_INPUT_TOKENS:
+    while estimate_input_tokens(messages) > max_input_tokens:
         context_trimmed = True
         previous_pages = progress.get("previous_pages", [])
         long_previous_page = next(
@@ -390,17 +301,13 @@ async def respond_to_instruction(
         messages = build_messages()
 
     if context_trimmed:
-        log_info("Trimmed page context and older history to fit the Groq token budget.")
-    log_info(f"Asking Groq ({model}) to interpret the instruction...")
-    response = await _budgeted_completion(
-        api_key, model, messages,
-        temperature=0.1,
-        reasoning_effort="low",
-    )
+        log_info(f"Trimmed page context and older history to fit the {provider.label} token budget.")
+    log_info(f"Asking {provider.label} ({provider.model}) to interpret the instruction...")
+    response = await budgeted_completion(messages, temperature=0.1)
 
     if not response.choices:
         raise ValueError(
-            "Groq returned no completion choices."
+            f"{provider.label} returned no completion choices."
         )
 
     choice = response.choices[0]
@@ -409,7 +316,7 @@ async def respond_to_instruction(
 
     if not content or not content.strip():
         raise ValueError(
-            "Groq returned empty content. "
+            f"{provider.label} returned empty content. "
             f"finish_reason={choice.finish_reason}, "
             f"usage={response.usage}, "
             f"model={response.model}"
@@ -417,34 +324,38 @@ async def respond_to_instruction(
 
     if choice.finish_reason == "length":
         raise ValueError(
-            "Groq response was truncated because the completion "
+            f"{provider.label} response was truncated because the completion "
             "token limit was reached."
         )
 
     log_info(
-        f"[GROQ_RESPONSE] "
+        f"[LLM_RESPONSE:{provider.name}] "
         f"finish_reason={choice.finish_reason}, "
         f"completion_tokens="
         f"{response.usage.completion_tokens if response.usage else 'unknown'} "
         f"{content}"
     )    
 
+    # Some providers wrap JSON in a markdown fence despite instructions.
+    json_text = content.strip()
+    if json_text.startswith("```"):
+        json_text = json_text.split("\n", 1)[-1].rsplit("```", 1)[0]
     try:
-        payload = json.loads(content)
+        payload = json.loads(json_text)
     except json.JSONDecodeError as error:
-        raise ValueError(f"Groq returned invalid JSON: {error}") from error
+        raise ValueError(f"{provider.label} returned invalid JSON: {error}") from error
 
     if not isinstance(payload, dict):
-        raise ValueError("Groq response must be a JSON object.")
+        raise ValueError(f"{provider.label} response must be a JSON object.")
 
     kind = payload.get("kind")
     if kind in ("answer", "done"):
         answer = payload.get("answer")
         if not isinstance(answer, str) or not answer.strip():
-            raise ValueError('Groq final response must contain a non-empty "answer".')
+            raise ValueError(f'{provider.label} final response must contain a non-empty "answer".')
         sources = payload.get("sources", [])
         if not isinstance(sources, list) or any(not isinstance(url, str) for url in sources):
-            raise ValueError('Groq "sources" must be a list of URL strings.')
+            raise ValueError(f'{provider.label} "sources" must be a list of URL strings.')
         return InstructionResponse(
             kind=kind,
             answer=answer.strip(),
@@ -459,7 +370,7 @@ async def respond_to_instruction(
             history_content=content,
         ), updated_cache
 
-    raise ValueError('Groq response must have kind "answer", "browse", "test", or "done" with valid fields.')
+    raise ValueError(f'{provider.label} response must have kind "answer", "browse", "test", or "done" with valid fields.')
 
 
 async def resolve_button_with_llm(
@@ -467,15 +378,11 @@ async def resolve_button_with_llm(
     candidates: list[str],
 ) -> str | None:
     """
-    Ask Groq to identify which visible button or link best matches target_name.
+    Ask the active LLM provider to identify which visible button or link best matches target_name.
     Used by resolver.py Tier 4.
     Returns the exact button name from candidates or None.
     """
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set.")
-
-    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    provider = get_provider()
 
     if not candidates:
         return None
@@ -506,14 +413,14 @@ async def resolve_button_with_llm(
             "content": prompt,
         },
     ]
-    if _estimate_input_tokens(messages) > GROQ_MAX_INPUT_TOKENS:
-        log_info("Skipping selector LLM fallback: candidate list exceeds the Groq token budget.")
+    if estimate_input_tokens(messages) > provider.max_input_tokens:
+        log_info(f"Skipping selector LLM fallback: candidate list exceeds the {provider.label} token budget.")
         return None
-    response = await _budgeted_completion(
-        api_key, model, messages,
-        max_completion_tokens=300,
+    response = await budgeted_completion(
+        messages,
+        # Gemini counts its thinking budget (1024 at "low") against max_tokens.
+        max_completion_tokens=1300 if provider.name == "google" else 300,
         temperature=0,
-        reasoning_effort="low",
     )
 
     answer = (response.choices[0].message.content or "").strip().strip('"').strip("'")

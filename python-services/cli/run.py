@@ -17,6 +17,7 @@ from extractors.page_content import extract_page_content
 from extractors.accessibility import extract_accessibility_tree
 
 from parser.llm_output_parser import parse_llm_output
+from parser.llm_client import PROVIDERS, set_provider
 from parser.natural_language import respond_to_instruction
 from parser.step_runner import run_steps
 
@@ -235,7 +236,7 @@ async def process_natural_language_instruction(
     for _ in range(max_actions + 1):
         snapshot = await extract_accessibility_tree(session.page)
         if not snapshot:
-            log_error("Could not extract page context for Groq.")
+            log_error("Could not extract page context for the LLM.")
             return
 
         try:
@@ -422,10 +423,6 @@ async def cmd_run_natural_language(
     dry_run: bool,
 ):
     """Run one natural-language instruction in its own browser session."""
-    if not os.getenv("GROQ_API_KEY"):
-        log_error("GROQ_API_KEY is not set. Add it to .env and recreate the service.")
-        return
-
     session = await launch_browser(headless=headless)
     try:
         if not await navigate_to(session.page, url):
@@ -438,10 +435,6 @@ async def cmd_run_natural_language(
 
 async def _run_interactive(url: str):
     """Read instructions against one persistent browser and conversation."""
-    if not os.getenv("GROQ_API_KEY"):
-        log_error("GROQ_API_KEY is not set. Add it to .env and recreate the service.")
-        return
-
     session = None
     current_url = None
     conversation_history: list[dict[str, str]] = []
@@ -493,9 +486,41 @@ async def _run_interactive(url: str):
             await close_browser(session)
 
 
+def select_provider_or_exit(name: str):
+    try:
+        provider = set_provider(name)
+    except RuntimeError as error:
+        log_error(str(error))
+        sys.exit(1)
+    log_info(f"Using {provider.label} ({provider.model}).")
+
+
+def prompt_for_provider() -> str:
+    names = list(PROVIDERS)
+    console.print("Choose an LLM provider:")
+    for index, name in enumerate(names, start=1):
+        console.print(f"  {index}. {PROVIDERS[name].label} [dim]({name})[/dim]")
+    while True:
+        try:
+            choice = input("Provider: ").strip().lower()
+        except EOFError:
+            console.print("\n[dim]End of input. Exiting.[/dim]")
+            sys.exit(0)
+        if choice.isdigit() and 1 <= int(choice) <= len(names):
+            return names[int(choice) - 1]
+        if choice in PROVIDERS:
+            return choice
+        console.print(f"Enter 1-{len(names)} or one of: {', '.join(names)}.")
+
+
 def run_interactive(url: str):
     """Keep one browser session open until the user exits the REPL."""
     console.rule("[step]Natural-Language QA CLI[/step]")
+    try:
+        select_provider_or_exit(prompt_for_provider())
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted. Exiting.[/dim]")
+        return
     console.print(f"Default target URL: {url}")
     console.print("Enter a QA instruction. Press Ctrl-C or Ctrl-D to quit.")
 
@@ -650,7 +675,13 @@ def build_parser() -> argparse.ArgumentParser:
     # --- run-natural-language command ---
     natural_parser = subparsers.add_parser(
         "run-natural-language",
-        help="Use Groq to plan and run QA steps from a natural-language instruction",
+        help="Use an LLM to plan and run QA steps from a natural-language instruction",
+    )
+    natural_parser.add_argument(
+        "--provider",
+        choices=list(PROVIDERS),
+        default=os.getenv("LLM_PROVIDER", "groq"),
+        help="LLM provider free tier to use (default: $LLM_PROVIDER or groq)",
     )
     natural_parser.add_argument(
         "--url",
@@ -729,6 +760,7 @@ def main():
         ))
 
     if args.command == "run-natural-language":
+        select_provider_or_exit(args.provider)
         asyncio.run(cmd_run_natural_language(
             url=args.url,
             instruction=args.instruction,

@@ -352,19 +352,29 @@ docker compose run --rm --no-deps python-services python cli/run.py run-natural-
 
 ### Python CLI: Natural-Language Mode
 
-The Python CLI uses Groq to work toward a natural-language question or QA goal.
+The Python CLI uses an LLM to work toward a natural-language question or QA goal.
 It sends page text, interactive elements, discovered link destinations, and
-action feedback to Groq, executes one action, then reads the page and replans.
-Add `GROQ_API_KEY` to the root `.env`,
-then rebuild the Python service so the Groq SDK is installed:
+action feedback to the model, executes one action, then reads the page and replans.
+The free tiers of three OpenAI-compatible providers are supported:
+
+| Provider | `--provider` | Key variable | Model variable (default) |
+| --- | --- | --- | --- |
+| Google AI Studio | `google` | `GEMINI_API_KEY` | `GEMINI_MODEL` (`gemini-2.5-flash`) |
+| Groq | `groq` | `GROQ_API_KEY` | `GROQ_MODEL` (`openai/gpt-oss-120b`) |
+| NVIDIA | `nvidia` | `NVIDIA_API_KEY` | `NVIDIA_MODEL` (`meta/llama-3.3-70b-instruct`) |
+
+Add the key for at least one provider to the root `.env`, then rebuild the
+Python service so the OpenAI SDK is installed:
 
 ```sh
 docker compose up -d --build python-services
 docker compose exec python-services python cli/run.py
 ```
 
-With no arguments, the CLI prompts for one natural-language message at a
-time using `>>> `. Questions can follow relevant discovered links to find
+With no arguments, the CLI first asks which provider to use, then prompts for
+one natural-language message at a
+time using `>>> `. The CLI exits with an error if the chosen provider's key is
+not set. Questions can follow relevant discovered links to find
 information on other pages, then return an evidence-grounded answer with source
 URLs. QA goals infer the necessary supported browser steps without requiring
 explicit instructions for each step. If a message
@@ -377,21 +387,30 @@ For a single instruction instead, use:
 
 ```sh
 docker compose exec python-services python cli/run.py run-natural-language \
+  --provider google \
   --url http://target-app:5173 \
   --instruction "Check that the login page is visible"
 ```
 
+`--provider` defaults to `LLM_PROVIDER` (Compose default `groq`).
+
 Both the REPL and single-instruction command use the same bounded agent loop.
-Groq plans up to eight actions for the current page, and the CLI executes them
+The model plans up to eight actions for the current page, and the CLI executes them
 locally without another model request while the page remains unchanged. It asks
 for fresh evidence after navigation, a visible page-state change, or an action
 failure. The CLI uses exact, approved, and accessibility-similarity selector
-resolution for those batches, without its separate Groq selector fallback. The
+resolution for those batches, without its separate LLM selector fallback. The
 interactive CLI retains visited-page evidence and recent actions between user
 instructions. Research navigation is limited to observed HTTP(S) links or a URL
 supplied by the user; it does not authorize form submission or state-changing
 interactions. The agent reports when it cannot finish rather than inventing
 missing facts.
+
+Each provider has a local rolling-minute budget within each CLI process,
+including selector-healing calls: Groq 8,000 tokens and 30 requests with a
+6,000-token input cap; Google AI Studio 250,000 tokens and 10 requests with a
+30,000-token input cap; NVIDIA 40 requests with a 30,000-token input cap.
+The Groq details below describe the default provider.
 
 Groq calls share an 8,000-token rolling-minute budget within each CLI process,
 including selector-healing calls. Requests reserve approximately estimated
@@ -419,9 +438,8 @@ lets the agent choose relevant staff or administration links instead of limiting
 its answer to the homepage. Answers depend on what the website actually exposes.
 
 Use `--dry-run` to inspect the next proposed action without executing it;
-later actions depend on fresh page evidence. The model
-defaults to `openai/gpt-oss-120b`; set `GROQ_MODEL` in `.env` to choose a
-different Groq model. Natural-language mode currently supports `click`,
+later actions depend on fresh page evidence. Set the provider's model variable
+in `.env` to choose a different model. Natural-language mode currently supports `click`,
 `type`, `check_visible`, `check_contains`, and `goto` actions.
 
 ### Expanded Playground Scenario
