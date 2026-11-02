@@ -32,6 +32,7 @@ class _UnresolvedElementError(Exception):
 async def run_steps(
     page: Page,
     steps: list[ParsedStep],
+    allow_llm_fallback: bool = True,
 ) -> tuple[RunResult, RootCause | None]:
     """
     Execute a list of ParsedStep objects against a loaded Playwright page.
@@ -44,7 +45,7 @@ async def run_steps(
 
     for index, step in enumerate(steps, start=1):
         log_info(f"  [{index}/{len(steps)}] {step.action} → {step.target}")
-        result = await _execute_step(page, step, index)
+        result = await _execute_step(page, step, index, allow_llm_fallback)
         results.append(result)
 
         if result.status == "passed":
@@ -83,6 +84,7 @@ async def _execute_step(
     page: Page,
     step: ParsedStep,
     step_number: int,
+    allow_llm_fallback: bool = True,
 ) -> StepExecutionResult:
     """
     Route a single ParsedStep to its handler.
@@ -92,11 +94,11 @@ async def _execute_step(
 
     try:
         if step.action == "goto":
-            extra = await _action_goto(page, step.target)
+            extra = await _action_goto(page, step.target, allow_llm_fallback)
         elif step.action == "type":
             extra = await _action_type(page, step.target, step.value or "")
         elif step.action == "click":
-            extra = await _action_click(page, step.target)
+            extra = await _action_click(page, step.target, allow_llm_fallback)
         elif step.action == "check_visible":
             extra = await _action_check_visible(page, step.target)
         elif step.action == "check_contains":
@@ -149,7 +151,11 @@ async def _execute_step(
 
 # ── action handlers ────────────────────────────────────────────────────────────
 
-async def _action_goto(page: Page, target: str) -> dict:
+async def _action_goto(
+    page: Page,
+    target: str,
+    allow_llm_fallback: bool = True,
+) -> dict:
     """Open a URL or activate a named navigation button or link."""
     url = urlsplit(target)
     if url.scheme in ("http", "https") and url.netloc:
@@ -162,7 +168,7 @@ async def _action_goto(page: Page, target: str) -> dict:
     heading = page.get_by_role("heading", name=heading_text, exact=True).first
     if await heading.is_visible():
         return {"selector_used": f'role=heading[name="{heading_text}"]'}
-    return await _action_click(page, target)
+    return await _action_click(page, target, allow_llm_fallback)
 
 
 async def _action_type(page: Page, target: str, value: str) -> dict:
@@ -177,7 +183,11 @@ async def _action_type(page: Page, target: str, value: str) -> dict:
     return {"selector_used": selector}
 
 
-async def _action_click(page: Page, target: str) -> dict:
+async def _action_click(
+    page: Page,
+    target: str,
+    allow_llm_fallback: bool = True,
+) -> dict:
     """
     Click a button or link using the full resolver pipeline.
     Tier 1 — exact match
@@ -185,7 +195,7 @@ async def _action_click(page: Page, target: str) -> dict:
     Tier 3 — similarity
     Tier 4 — LLM stub
     """
-    resolution = await resolve_button(page, target)
+    resolution = await resolve_button(page, target, allow_llm_fallback)
 
     if not resolution.resolved_name:
         raise _UnresolvedElementError(

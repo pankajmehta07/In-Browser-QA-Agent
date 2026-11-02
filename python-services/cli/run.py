@@ -216,20 +216,21 @@ async def process_natural_language_instruction(
     instruction: str,
     dry_run: bool,
     conversation_history: list[dict[str, str]] | None = None,
+    session_state: dict | None = None,
 ):
     """Observe, act, and replan toward a question or QA goal on an open session."""
     max_actions = 8
-    evidence: dict[str, dict] = {}
+    session_state = session_state if session_state is not None else {}
+    evidence: dict[str, dict] = session_state.setdefault("evidence", {})
+    session_actions: list[dict] = session_state.setdefault("actions", [])
     action_history: list[dict] = []
     attempted_actions: set[tuple] = set()
-    known_urls = {session.page.url}
+    known_urls = set(evidence) | {session.page.url}
     explicit_url = extract_instruction_url(instruction)
     if explicit_url:
         known_urls.add(explicit_url)
     feedback = None
     research_only = False
-    snapshot_cache: dict = {}
-    after_action = False
 
     for _ in range(max_actions + 1):
         snapshot = await extract_accessibility_tree(session.page)
@@ -256,20 +257,16 @@ async def process_natural_language_instruction(
                 "previous_pages": [
                     page for url, page in evidence.items() if url != session.page.url
                 ][-5:],
-                "actions": action_history,
+                "actions": session_actions[-8:],
                 "feedback": feedback,
             }
-            response, snapshot_cache = await respond_to_instruction(
+            response, _ = await respond_to_instruction(
                 instruction, snapshot, page_title, page_text,
                 (conversation_history or [])[-12:], agent_context,
-                snapshot_cache=snapshot_cache,
-                after_action=after_action,
             )
         except Exception as error:
             log_error(f"Could not interpret the instruction or read page evidence: {error}")
             return
-
-        after_action = False 
 
         if response.kind in ("answer", "done"):
             if any(url not in evidence for url in response.sources):
@@ -292,60 +289,129 @@ async def process_natural_language_instruction(
 
         if response.kind == "browse":
             research_only = True
-        if research_only and response.kind != "browse":
+        if research_only and response.kind == "test":
             feedback = "This is a read-only research task. Choose an observed link URL or provide a final factual answer."
             continue
 
         parse_result = parse_llm_output(response.steps_json or "[]")
         if not parse_result.success or not parse_result.steps or parse_result.error:
-            feedback = "No complete valid next action was generated. Choose one supported action or finish honestly."
+            feedback = "No complete valid action plan was generated. Choose supported actions or finish honestly."
             continue
-        if len(parse_result.steps) != 1:
-            feedback = "Choose exactly one next action. Later steps must be planned from fresh page evidence."
+        if len(parse_result.steps) > max_actions - len(action_history):
+            feedback = "The action plan exceeds the remaining action budget. Return a shorter page-local plan."
             continue
-
-        step = parse_result.steps[0]
-        target_url = urlsplit(step.target)
-        if step.action == "goto" and target_url.scheme:
-            if target_url.scheme not in ("http", "https") or step.target not in known_urls:
-                feedback = "Navigation rejected: use an exact observed HTTP(S) link URL or a user-provided URL."
-                continue
         if response.kind == "browse" and (
-            step.action != "goto" or step.target not in known_urls
-            or target_url.scheme not in ("http", "https")
+            len(parse_result.steps) != 1 or parse_result.steps[0].action != "goto"
         ):
-            feedback = "Research permits only read-only navigation to an observed HTTP(S) URL."
+            feedback = "Read-only research permits exactly one navigation action at a time."
             continue
 
         if dry_run:
             print_parse_result(parse_result)
-            log_success("Dry run complete. No browser actions were executed; later actions depend on fresh page evidence.")
+            log_success("Dry run complete. No browser actions were executed.")
             return
 
-        if len(action_history) >= max_actions:
-            break
-        fingerprint = (session.page.url, step.action, step.target, step.value)
-        if fingerprint in attempted_actions:
-            feedback = "That action was already attempted on this page. Choose another observed route or finish honestly."
-            continue
-        attempted_actions.add(fingerprint)
+        page_changed = False
+        plan_failed = False
+        for step in parse_result.steps:
+            target_url = urlsplit(step.target)
+            if step.action == "goto" and target_url.scheme:
+                if target_url.scheme not in ("http", "https") or step.target not in known_urls:
+                    feedback = "Navigation rejected: use an exact observed HTTP(S) link URL or a user-provided URL."
+                    plan_failed = True
+                    break
+            if response.kind == "browse" and (
+                step.target not in known_urls or target_url.scheme not in ("http", "https")
+            ):
+                feedback = "Research permits only read-only navigation to an observed HTTP(S) URL."
+                plan_failed = True
+                break
 
-        log_info(f"Agent action {len(action_history) + 1}/{max_actions}: {step.action} {step.target}")
-        run_result, root_cause = await run_steps(session.page, [step])
-        after_action = True 
-        print_run_result(run_result)
-        action_history.append({
-            "url_before": fingerprint[0],
-            "url_after": session.page.url,
-            "result": asdict(run_result.steps[0]),
-        })
-        feedback = "Inspect the new evidence and decide whether the goal is complete or another action is needed."
-        if root_cause:
-            print_root_cause(root_cause)
-            feedback = "The last action failed. Use the recorded error to choose another observed route or explain the limitation."
+            url_before = session.page.url
+            fingerprint = (url_before, step.action, step.target, step.value)
+            if fingerprint in attempted_actions:
+                feedback = "That action was already attempted on this page. Choose another observed route or finish honestly."
+                plan_failed = True
+                break
+            attempted_actions.add(fingerprint)
+
+            log_info(f"Agent action {len(action_history) + 1}/{max_actions}: {step.action} {step.target}")
+            run_result, root_cause = await run_steps(
+                session.page, [step], allow_llm_fallback=False,
+            )
+            print_run_result(run_result)
+            action_record = {
+                "url_before": url_before,
+                "url_after": session.page.url,
+                "result": asdict(run_result.steps[0]),
+            }
+            action_history.append(action_record)
+            session_actions.append(action_record)
+            del session_actions[:-8]
+
+            if root_cause:
+                print_root_cause(root_cause)
+            if run_result.status != "passed":
+                feedback = "The last action failed. Use the recorded error and fresh page evidence to recover."
+                plan_failed = True
+                break
+
+            if session.page.url != url_before:
+                feedback = "Navigation completed. Inspect the destination page before planning further actions."
+                page_changed = True
+                break
+
+            next_snapshot = await extract_accessibility_tree(session.page)
+            next_title = await session.page.title()
+            next_text = await session.page.locator("body").inner_text(timeout=5000)
+            evidence[session.page.url] = {
+                "url": session.page.url,
+                "title": next_title,
+                "text": next_text[:8000],
+            }
+            if _page_state_signature(snapshot, page_title, page_text) != _page_state_signature(
+                next_snapshot, next_title, next_text,
+            ):
+                feedback = "The page changed after the last action. Re-evaluate the fresh page evidence before continuing."
+                page_changed = True
+                break
+
+        if page_changed or plan_failed:
+            continue
+        if response.kind == "browse":
+            log_warning("Navigation did not change the page; stopping to avoid repeating the same request.")
+            return
+
+        completed_actions = "; ".join(
+            f"{item['result']['action']} {item['result']['target']}"
+            for item in action_history
+        )
+        outcome = f"Page-local action plan completed: {completed_actions}."
+        console.print("[bold]Outcome[/bold]")
+        console.print(outcome, markup=False)
+        if conversation_history is not None and response.history_content:
+            conversation_history.extend([
+                {"role": "user", "content": instruction},
+                {"role": "assistant", "content": response.history_content},
+            ])
+        return
 
     log_warning("Agent stopped at its planning limit without a final answer or outcome. The task may be incomplete.")
     console.print(f"Last page: {session.page.url}", markup=False)
+
+
+def _page_state_signature(snapshot, page_title: str, page_text: str) -> tuple:
+    if snapshot is None:
+        return ()
+    return (
+        snapshot.url,
+        page_title,
+        page_text,
+        tuple(
+            (node.role, node.name, node.visible, node.disabled, node.href)
+            for node in snapshot.nodes
+        ),
+    )
 
 
 async def cmd_run_natural_language(
@@ -378,6 +444,7 @@ async def _run_interactive(url: str):
     session = None
     current_url = None
     conversation_history: list[dict[str, str]] = []
+    session_state: dict = {"evidence": {}, "actions": []}
 
     try:
         while True:
@@ -415,6 +482,7 @@ async def _run_interactive(url: str):
                     instruction,
                     dry_run=False,
                     conversation_history=conversation_history,
+                    session_state=session_state,
                 )
                 current_url = session.page.url
             except Exception as error:

@@ -61,37 +61,51 @@ async def _budgeted_completion(
                         **options,
                     )
                 except RateLimitError as error:
+                    if _groq_requests and _groq_requests[-1][0] == request_time:
+                        _groq_requests.pop()
                     if attempt:
                         raise
                     try:
-                        wait_seconds = max(60.0, float(error.response.headers.get("retry-after", "60")))
+                        wait_seconds = max(0.1, float(error.response.headers.get("retry-after", "60")))
                     except (TypeError, ValueError):
                         wait_seconds = 60.0
                     log_info(f"Groq rate limit reached; waiting {wait_seconds:.1f}s before one retry...")
                     await asyncio.sleep(wait_seconds)
                     continue
+                except BaseException:
+                    if _groq_requests and _groq_requests[-1][0] == request_time:
+                        _groq_requests.pop()
+                    raise
 
                 if response.usage is not None:
-                    _groq_requests[-1] = (
-                        request_time, response.usage.total_tokens + 256,
+                    prompt_details = getattr(response.usage, "prompt_tokens_details", None)
+                    cached_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+                    accounted_tokens = max(0, response.usage.total_tokens - cached_tokens)
+                    _groq_requests[-1] = (request_time, accounted_tokens + 256)
+                    log_info(
+                        "Groq usage: "
+                        f"prompt_tokens={response.usage.prompt_tokens}, "
+                        f"cached_prompt_tokens={cached_tokens}, "
+                        f"completion_tokens={response.usage.completion_tokens}, "
+                        f"rate_budget_tokens={accounted_tokens}"
                     )
                 return response
     raise RuntimeError("Groq request could not be completed within the rate limit.")
 
 
-SYSTEM_PROMPT = """You are a concise website research assistant and QA agent. Work toward the user's goal, not just the current page. Infer the next necessary action without requiring the user to supply explicit steps. You receive fresh page evidence and action feedback after each action.
+SYSTEM_PROMPT = """You are a concise website research assistant and QA agent. Work toward the user's goal, not just the current page. Infer the necessary actions without requiring the user to supply explicit steps. You receive fresh page evidence whenever navigation, a visible page change, or a failed action requires replanning.
 
 For website questions, answer only when the supplied current or previously visited page evidence supports the answer. If information is missing, follow a relevant observed link and inspect the destination. For questions about people or roles, consider links such as People, Staff, Faculty, Administration, About, or Contact when available. Interpret abbreviations using page evidence. Do not conclude that information is absent merely because it is missing from the homepage. Explore promising unvisited links first. Never invent people, roles, URLs, or facts.
 
-For requests to test or interact, infer and execute the necessary setup, navigation, interaction, and assertions. Plan only ONE next action using the currently observed controls. After navigation or interaction, re-evaluate fresh evidence before choosing another action. Avoid repeating completed actions. Use action feedback to recover from failed selectors or try another observed route. Say when the goal cannot be completed with the available evidence or supported actions.
+For requests to test or interact, infer the necessary setup, navigation, interaction, and assertions. Return a page-local sequence of up to eight supported actions grounded in the current evidence and user instruction. The sequence runs without model feedback between actions, so do not include actions that depend on unseen results or controls. End the sequence at navigation; the agent will inspect the destination before planning further actions. Avoid repeating completed actions. Say when the goal cannot be completed with the available evidence or supported actions.
 
 Return only one of these JSON object shapes:
 {"kind": "answer", "answer": "...", "sources": ["URL of a visited supporting page"], "steps": []}
 {"kind": "browse", "answer": null, "steps": [{"action": "goto", "target": "exact observed HTTP(S) link URL"}]}
-{"kind": "test", "answer": null, "steps": [{"action": "...", "target": "...", "value": "..."}]}
+{"kind": "test", "answer": null, "steps": [{"action": "...", "target": "...", "value": "..."}, {"action": "...", "target": "..."}]}
 {"kind": "done", "answer": "Concise outcome grounded in executed actions and assertions", "steps": []}
 
-Use browse for read-only research navigation, answer for a final factual response, test for the next action of a requested interaction or test, and done when that requested interaction or test is finished or cannot proceed. Questions alone do not authorize form filling, submission, login, or state-changing clicks. For research use only discovered HTTP(S) URLs, including links in collapsed menus; do not invent URL paths. Cite only visited supporting pages. If the action budget is exhausted, give an honest partial answer or outcome, identifying any missing evidence.
+Use browse for exactly one read-only navigation action, answer for a final factual response, test for a page-local sequence of requested interaction or test actions, and done when that requested interaction or test is finished or cannot proceed. Questions alone do not authorize form filling, submission, login, or state-changing clicks. For research use only discovered HTTP(S) URLs, including links in collapsed menus; do not invent URL paths. Cite only visited supporting pages. If the action budget is exhausted, give an honest partial answer or outcome, identifying any missing evidence.
 
 Supported actions:
 - click: target is the accessible name of a visible button or link.

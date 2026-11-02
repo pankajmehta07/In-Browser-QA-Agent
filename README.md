@@ -382,11 +382,16 @@ docker compose exec python-services python cli/run.py run-natural-language \
 ```
 
 Both the REPL and single-instruction command use the same bounded agent loop.
-Each instruction allows up to eight browser actions, with repeated actions
-blocked and failures returned to the model for replanning. Research navigation
-is limited to observed HTTP(S) links or a URL supplied by the user; it does not
-authorize form submission or state-changing interactions. The agent reports
-when it cannot finish rather than inventing missing facts.
+Groq plans up to eight actions for the current page, and the CLI executes them
+locally without another model request while the page remains unchanged. It asks
+for fresh evidence after navigation, a visible page-state change, or an action
+failure. The CLI uses exact, approved, and accessibility-similarity selector
+resolution for those batches, without its separate Groq selector fallback. The
+interactive CLI retains visited-page evidence and recent actions between user
+instructions. Research navigation is limited to observed HTTP(S) links or a URL
+supplied by the user; it does not authorize form submission or state-changing
+interactions. The agent reports when it cannot finish rather than inventing
+missing facts.
 
 Groq calls share an 8,000-token rolling-minute budget within each CLI process,
 including selector-healing calls. Requests reserve approximately estimated
@@ -398,7 +403,16 @@ The agent trims older context to a 6,000-token estimated input cap, limits
 planner responses to 1,000 tokens, and waits when the minute budget is exhausted.
 Provider rate-limit responses trigger a cooldown and one retry. Separate CLI
 processes or other applications using the same API key share Groq's account
-quota, but not this local budget.
+quota, but not this local budget. The system prompt stays at the start of each
+request so Groq can reuse a stable prompt prefix. Groq automatically caches
+matching prefixes for supported models, including the default
+`openai/gpt-oss-120b`; cache hits are not guaranteed and expire after two hours
+without use. Cached input tokens receive a 50% price discount and do not count
+toward Groq rate limits. The CLI logs reported cached prompt tokens and subtracts
+them from its rolling rate-budget accounting after each response. It still
+reserves the full estimated input before a request because a cache hit is not
+guaranteed. Prompt caching reduces processing cost and latency; it does not
+preserve conversation state between requests.
 
 For example, asking `Who are the deputy HODs of the department on https://doece.tcioe.edu.np/`
 lets the agent choose relevant staff or administration links instead of limiting

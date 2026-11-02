@@ -86,7 +86,11 @@ class ResolutionResult:
 
 # ── main resolver ─────────────────────────────────────────────────────────────
 
-async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
+async def resolve_button(
+    page: Page,
+    target_name: str,
+    allow_llm_fallback: bool = True,
+) -> ResolutionResult:
     """
     Try to resolve a button or link name through four tiers:
       Tier 1 — exact role match
@@ -281,6 +285,24 @@ async def resolve_button(page: Page, target_name: str) -> ResolutionResult:
         confidence=0.0,
         estimated_cost_usd=0.004,
     )
+
+    if not allow_llm_fallback:
+        tier4.status = "skipped"
+        tier4.estimated_cost_usd = 0.0
+        tier4.error = "LLM fallback disabled for this action batch."
+        attempts.append(tier4)
+        total_cost = sum(attempt.estimated_cost_usd for attempt in attempts)
+        return ResolutionResult(
+            target_name=target_name,
+            resolved_name=None,
+            was_healed=False,
+            resolution_strategy="unresolved",
+            confidence=0.0,
+            estimated_cost_usd=total_cost,
+            old_selector=old_selector,
+            new_selector=None,
+            attempts=attempts,
+        )
 
     try:
         # collect visible button names from accessibility snapshot
