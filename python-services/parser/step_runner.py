@@ -36,6 +36,7 @@ async def run_steps(
 ) -> tuple[RunResult, RootCause | None]:
     """
     Execute a list of ParsedStep objects against a loaded Playwright page.
+    Stops execution at the first failed step.
     Returns (RunResult, RootCause | None).
     """
     log_info(f"Running {len(steps)} steps...")
@@ -52,6 +53,14 @@ async def run_steps(
             log_success(f"  Step {index} passed ({result.duration_ms}ms)")
         else:
             log_error(f"  Step {index} failed — {result.error}")
+            
+            skipped = len(steps) - len(results)
+            if skipped:
+                log_warning(
+                    f"Stopping execution. {skipped} remaining step(s) skipped."
+                )
+
+            break
 
     total_ms = int((time.time() - overall_start) * 1000)
     passed   = [r for r in results if r.status == "passed"]

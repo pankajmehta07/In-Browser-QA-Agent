@@ -230,7 +230,7 @@ async def process_natural_language_instruction(
     if explicit_url:
         known_urls.add(explicit_url)
     feedback = None
-    research_only = False
+    # research_only = False
 
     for _ in range(max_actions + 1):
         snapshot = await extract_accessibility_tree(session.page)
@@ -288,10 +288,11 @@ async def process_natural_language_instruction(
             return
 
         if response.kind == "browse":
-            research_only = True
-        if research_only and response.kind == "test":
-            feedback = "This is a read-only research task. Choose an observed link URL or provide a final factual answer."
-            continue
+            # research_only = True
+            log_info("Agent is navigating to the next page...")
+        # if research_only and response.kind == "test":
+        #     feedback = "This is a read-only research task. Choose an observed link URL or provide a final factual answer."
+        #     continue
 
         parse_result = parse_llm_output(response.steps_json or "[]")
         if not parse_result.success or not parse_result.steps or parse_result.error:
@@ -374,7 +375,7 @@ async def process_natural_language_instruction(
             ):
                 feedback = "The page changed after the last action. Re-evaluate the fresh page evidence before continuing."
                 page_changed = True
-                break
+                # break
 
         if page_changed or plan_failed:
             continue
