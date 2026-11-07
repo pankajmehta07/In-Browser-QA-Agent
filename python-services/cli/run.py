@@ -30,6 +30,11 @@ from utils.file_writer import generate_filename, save_report_to_file
 from helpers.classify_reruns import classify_reruns
 
 
+MAX_TOTAL_ACTIONS = 30
+MAX_STEPS_PER_PLAN = 8
+MAX_PLANNING_TURNS = 15
+
+
 def extract_instruction_url(instruction: str) -> str | None:
     match = re.search(r"https?://[^\s<>\"]+", instruction, re.IGNORECASE)
     if not match:
@@ -221,7 +226,6 @@ async def process_natural_language_instruction(
     session_state: dict | None = None,
 ):
     """Observe, act, and replan toward a question or QA goal on an open session."""
-    max_actions = 8
     session_state = session_state if session_state is not None else {}
     evidence: dict[str, dict] = session_state.setdefault("evidence", {})
     session_actions: list[dict] = session_state.setdefault("actions", [])
@@ -237,7 +241,21 @@ async def process_natural_language_instruction(
     if monitor is None or monitor.page is not session.page:
         monitor = session_state["monitor"] = PageMonitor(session.page)
 
-    for _ in range(max_actions + 1):
+    for planning_turn in range(MAX_PLANNING_TURNS + 1):
+        remaining_actions = MAX_TOTAL_ACTIONS - len(action_history)
+        final_response_only = remaining_actions == 0 or planning_turn == MAX_PLANNING_TURNS
+        if final_response_only:
+            stop_reason = (
+                f"total action limit ({MAX_TOTAL_ACTIONS}) reached"
+                if remaining_actions == 0
+                else f"planning turn limit ({MAX_PLANNING_TURNS}) reached"
+            )
+            log_warning(f"Agent {stop_reason}. Requesting a final summary without further actions.")
+            feedback = " ".join(filter(None, [
+                feedback,
+                f"The {stop_reason}. Return only answer or done with empty steps. "
+                "Summarize the observed results and state what remains incomplete or unverified.",
+            ]))
         snapshot = await extract_accessibility_tree(session.page)
         if not snapshot:
             log_error("Could not extract page context for the LLM.")
@@ -268,12 +286,17 @@ async def process_natural_language_instruction(
                 if node.href and node.href.startswith(("http://", "https://"))
             )
             agent_context = {
-                "remaining_actions": max_actions - len(action_history),
+                "max_total_actions": MAX_TOTAL_ACTIONS,
+                "max_steps_per_plan": MAX_STEPS_PER_PLAN,
+                "max_planning_turns": MAX_PLANNING_TURNS,
+                "remaining_actions": remaining_actions,
+                "remaining_planning_turns": max(0, MAX_PLANNING_TURNS - planning_turn - 1),
+                "final_response_only": final_response_only,
                 "visited_urls": list(evidence),
                 "previous_pages": [
                     page for url, page in evidence.items() if url != session.page.url
                 ][-5:],
-                "actions": session_actions[-8:],
+                "actions": session_actions[-MAX_TOTAL_ACTIONS:],
                 "browser_events_since_last_action": monitor.drain(),
                 "feedback": feedback,
             }
@@ -304,6 +327,10 @@ async def process_natural_language_instruction(
                     console.print(f"Source: {url}", markup=False)
             return
 
+        if final_response_only:
+            log_error("The agent returned an action plan after its budget was exhausted. No actions were executed.")
+            break
+
         if response.kind == "browse":
             # research_only = True
             log_info("Agent is navigating to the next page...")
@@ -315,8 +342,13 @@ async def process_natural_language_instruction(
         if not parse_result.success or not parse_result.steps or parse_result.error:
             feedback = "No complete valid action plan was generated. Choose supported actions or finish honestly."
             continue
-        if len(parse_result.steps) > max_actions - len(action_history):
-            feedback = "The action plan exceeds the remaining action budget. Return a shorter page-local plan."
+        plan_limit = min(MAX_STEPS_PER_PLAN, remaining_actions)
+        if len(parse_result.steps) > plan_limit:
+            feedback = (
+                f"The action plan has {len(parse_result.steps)} steps but at most {plan_limit} are allowed "
+                f"this turn (per-plan limit {MAX_STEPS_PER_PLAN}, remaining total {remaining_actions}). "
+                "Return a shorter page-local plan. No actions from this plan were executed."
+            )
             continue
         if response.kind == "browse" and (
             len(parse_result.steps) != 1 or parse_result.steps[0].action != "goto"
@@ -356,7 +388,7 @@ async def process_natural_language_instruction(
                 break
             attempted_actions.add(fingerprint)
 
-            log_info(f"Agent action {len(action_history) + 1}/{max_actions}: {step.action} {step.target}")
+            log_info(f"Agent action {len(action_history) + 1}/{MAX_TOTAL_ACTIONS}: {step.action} {step.target}")
             run_result, root_cause = await run_steps(
                 session.page, [step], allow_llm_fallback=False,
             )
@@ -392,7 +424,7 @@ async def process_natural_language_instruction(
                 action_record["observation"] = observation
             action_history.append(action_record)
             session_actions.append(action_record)
-            del session_actions[:-8]
+            del session_actions[:-MAX_TOTAL_ACTIONS]
 
             if root_cause:
                 print_root_cause(root_cause)
@@ -451,21 +483,11 @@ async def process_natural_language_instruction(
             log_warning("Navigation did not change the page; stopping to avoid repeating the same request.")
             return
 
-        completed_actions = "; ".join(
-            f"{item['result']['action']} {item['result']['target']}"
-            for item in action_history
+        feedback = (
+            "The page-local plan completed. If the user's goal still requires actions, return the next page-local plan within the remaining budget. Otherwise return done with an evidence-grounded outcome."
         )
-        outcome = f"Page-local action plan completed: {completed_actions}."
-        console.print("[bold]Outcome[/bold]")
-        console.print(outcome, markup=False)
-        if conversation_history is not None and response.history_content:
-            conversation_history.extend([
-                {"role": "user", "content": instruction},
-                {"role": "assistant", "content": response.history_content},
-            ])
-        return
 
-    log_warning("Agent stopped at its planning limit without a final answer or outcome. The task may be incomplete.")
+    log_warning("Agent stopped without a valid final answer or outcome. The task may be incomplete.")
     console.print(f"Last page: {session.page.url}", markup=False)
 
 

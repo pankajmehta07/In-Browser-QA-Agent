@@ -396,7 +396,21 @@ docker compose exec python-services python cli/run.py run-natural-language \
 `--provider` defaults to `LLM_PROVIDER` (Compose default `groq`).
 
 Both the REPL and single-instruction command use the same bounded agent loop.
-The model plans up to eight actions for the current page, and the CLI executes them
+Each user instruction has a budget of 30 executed actions across all LLM plans,
+with at most eight actions per plan and 15 planning turns. Failed executed actions,
+assertions, and waits count toward the action budget; rejected plans consume a
+planning turn but execute nothing. Plans exceeding either the per-plan limit or
+the remaining total are rejected in full, not truncated. These independent limits
+are defined by `MAX_TOTAL_ACTIONS`, `MAX_STEPS_PER_PLAN`, and `MAX_PLANNING_TURNS`
+in [the Python CLI](python-services/cli/run.py).
+
+The model receives the limits and remaining budgets on every turn, even when
+older context is trimmed. After either budget is exhausted, the CLI permits one
+additional summary-only response with no further browser actions and reports the
+stopping reason. If no valid summary is returned, it explicitly warns that the
+task may be incomplete. Budgets reset for each user instruction in the REPL.
+
+The model plans actions for the current page, and the CLI executes them
 locally without another model request while the page remains unchanged. It asks
 for fresh evidence after navigation, a visible page-state change, or an action
 failure. The CLI uses exact, approved, and accessibility-similarity selector
@@ -405,7 +419,9 @@ interactive CLI retains visited-page evidence and recent actions between user
 instructions. Research navigation is limited to observed HTTP(S) links or a URL
 supplied by the user; it does not authorize form submission or state-changing
 interactions. The agent reports when it cannot finish rather than inventing
-missing facts.
+missing facts. After each completed plan, the model can continue with another
+plan or return an evidence-grounded final outcome; a completed batch alone is
+not treated as completion of the entire user goal.
 
 The chosen provider's model is always tried first. On a rate limit (429),
 server error such as 503, timeout (90 seconds), or a prompt that exceeds a

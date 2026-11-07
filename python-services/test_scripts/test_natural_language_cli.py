@@ -3,9 +3,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from cli.run import process_natural_language_instruction
+from cli.run import MAX_PLANNING_TURNS, MAX_STEPS_PER_PLAN, MAX_TOTAL_ACTIONS, process_natural_language_instruction
 from parser.models import RunResult, StepExecutionResult
-from parser.natural_language import InstructionResponse
+from parser.natural_language import InstructionResponse, respond_to_instruction
 
 
 class _FakeLocator:
@@ -48,7 +48,7 @@ class NaturalLanguageCliTests(unittest.IsolatedAsyncioTestCase):
             ],
         ), None
 
-    async def test_same_page_plan_uses_one_model_request(self):
+    async def test_same_page_plan_requests_final_outcome(self):
         page = _FakePage("https://example.com/")
         session = SimpleNamespace(page=page)
         instruction = "Enter a value and verify the result"
@@ -60,7 +60,8 @@ class NaturalLanguageCliTests(unittest.IsolatedAsyncioTestCase):
             ]),
             history_content='{"kind":"test"}',
         )
-        model_call = AsyncMock(return_value=(response, {}))
+        done = InstructionResponse(kind="done", answer="Value entered and verified")
+        model_call = AsyncMock(side_effect=[(response, {}), (done, {})])
         run_action = AsyncMock(
             side_effect=lambda current_page, steps, **kwargs: self._passed_result(steps[0]),
         )
@@ -74,7 +75,7 @@ class NaturalLanguageCliTests(unittest.IsolatedAsyncioTestCase):
                 conversation_history=[], session_state={"evidence": {}, "actions": []},
             )
 
-        self.assertEqual(model_call.await_count, 1)
+        self.assertEqual(model_call.await_count, 2)
         self.assertEqual(run_action.await_count, 2)
         self.assertTrue(all(
             call.kwargs["allow_llm_fallback"] is False
@@ -209,6 +210,152 @@ class NaturalLanguageCliTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('name="Your password"', agent_context["feedback"])
         self.assertNotIn("Call log", agent_context["feedback"])
         self.assertNotIn("Call log", agent_context["actions"][-1]["result"]["error"])
+
+    def _plan(self, start, count):
+        return InstructionResponse(
+            kind="test",
+            steps_json=json.dumps([
+                {"action": "check_visible", "target": f"Heading {index}"}
+                for index in range(start, start + count)
+            ]),
+        )
+
+    async def _run_responses(self, responses, *, fail_actions=False):
+        page = _FakePage("https://example.com/")
+        model_call = AsyncMock(side_effect=[(response, {}) for response in responses])
+
+        def execute(current_page, steps, **kwargs):
+            result, _ = self._passed_result(steps[0])
+            if fail_actions:
+                result.status = "failed"
+                result.passed_steps = 0
+                result.failed_steps = 1
+                result.steps[0].status = "failed"
+                result.steps[0].error = "Element not found"
+            return result, None
+
+        run_action = AsyncMock(side_effect=execute)
+        snapshot = AsyncMock(side_effect=lambda current_page: SimpleNamespace(url=current_page.url, nodes=[]))
+        with patch("cli.run.respond_to_instruction", model_call), \
+             patch("cli.run.run_steps", run_action), \
+             patch("cli.run.extract_accessibility_tree", snapshot), \
+             patch("cli.run.log_warning") as warning:
+            await process_natural_language_instruction(
+                SimpleNamespace(page=page), "Test all headings", dry_run=False,
+                session_state={"evidence": {}, "actions": []},
+            )
+        return model_call, run_action, warning
+
+    async def test_thirty_actions_across_plans_then_summary_only(self):
+        done = InstructionResponse(kind="done", answer="All headings verified")
+        model_call, run_action, warning = await self._run_responses([
+            self._plan(0, 8), self._plan(8, 8), self._plan(16, 8), self._plan(24, 6), done,
+        ])
+        self.assertEqual(run_action.await_count, MAX_TOTAL_ACTIONS)
+        contexts = [call.args[5] for call in model_call.await_args_list]
+        self.assertEqual([ctx["remaining_actions"] for ctx in contexts], [30, 22, 14, 6, 0])
+        self.assertTrue(contexts[-1]["final_response_only"])
+        self.assertEqual(len(contexts[-1]["actions"]), MAX_TOTAL_ACTIONS)
+        self.assertEqual(contexts[0]["max_steps_per_plan"], MAX_STEPS_PER_PLAN)
+        self.assertEqual(contexts[0]["max_planning_turns"], MAX_PLANNING_TURNS)
+        self.assertIn("total action limit (30)", warning.call_args_list[0].args[0])
+
+    async def test_nine_step_plan_is_rejected_in_full(self):
+        done = InstructionResponse(kind="done", answer="Stopped")
+        model_call, run_action, _ = await self._run_responses([self._plan(0, 9), done])
+        run_action.assert_not_awaited()
+        context = model_call.await_args_list[1].args[5]
+        self.assertEqual(context["remaining_actions"], MAX_TOTAL_ACTIONS)
+        self.assertIn("at most 8", context["feedback"])
+        self.assertIn("No actions from this plan were executed", context["feedback"])
+
+    async def test_remaining_total_limit_and_no_actions_after_exhaustion(self):
+        model_call, run_action, warning = await self._run_responses([
+            self._plan(0, 8), self._plan(8, 8), self._plan(16, 8),
+            self._plan(24, 7), self._plan(24, 6), self._plan(30, 1),
+        ])
+        self.assertEqual(run_action.await_count, MAX_TOTAL_ACTIONS)
+        context = model_call.await_args_list[4].args[5]
+        self.assertIn("at most 6", context["feedback"])
+        self.assertTrue(model_call.await_args_list[-1].args[5]["final_response_only"])
+        self.assertIn("without a valid final answer", warning.call_args_list[-1].args[0])
+
+    async def test_invalid_plans_consume_only_planning_turns(self):
+        invalid = InstructionResponse(kind="test", steps_json="[]")
+        done = InstructionResponse(kind="done", answer="Unable to generate a valid plan")
+        model_call, run_action, warning = await self._run_responses(
+            [invalid] * MAX_PLANNING_TURNS + [done],
+        )
+        run_action.assert_not_awaited()
+        self.assertEqual(model_call.await_count, MAX_PLANNING_TURNS + 1)
+        contexts = [call.args[5] for call in model_call.await_args_list]
+        self.assertEqual(
+            [ctx["remaining_planning_turns"] for ctx in contexts],
+            list(range(MAX_PLANNING_TURNS - 1, -1, -1)) + [0],
+        )
+        self.assertTrue(contexts[-1]["final_response_only"])
+        self.assertEqual(contexts[-1]["remaining_actions"], MAX_TOTAL_ACTIONS)
+        self.assertIn("planning turn limit (15)", warning.call_args_list[0].args[0])
+
+    async def test_failed_actions_consume_total_budget(self):
+        done = InstructionResponse(kind="done", answer="Both attempts failed")
+        with patch("cli.run.MAX_TOTAL_ACTIONS", 2):
+            model_call, run_action, _ = await self._run_responses(
+                [self._plan(0, 1), self._plan(1, 1), done], fail_actions=True,
+            )
+        self.assertEqual(run_action.await_count, 2)
+        self.assertEqual(model_call.await_args_list[-1].args[5]["remaining_actions"], 0)
+        self.assertTrue(model_call.await_args_list[-1].args[5]["final_response_only"])
+
+    async def test_prompt_trimming_preserves_runtime_budgets(self):
+        provider = SimpleNamespace(name="test", label="Test", model="test", max_input_tokens=2000)
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content='{"kind":"done","answer":"Stopped","steps":[]}'),
+                finish_reason="stop",
+            )],
+            usage=None,
+            model="test",
+        )
+        budget = {
+            "max_total_actions": 30, "max_steps_per_plan": 8, "max_planning_turns": 15,
+            "remaining_actions": 0, "remaining_planning_turns": 0, "final_response_only": True,
+        }
+        model_call = AsyncMock(return_value=completion)
+        with patch("parser.natural_language.get_provider", return_value=provider), \
+             patch("parser.natural_language.budgeted_completion", model_call), \
+             patch("parser.natural_language.estimate_input_tokens", side_effect=lambda messages:
+                   10000 if "oversized feedback" in messages[-1]["content"] else 100):
+            await respond_to_instruction(
+                "Test", SimpleNamespace(url="https://example.com/", nodes=[]), "", "",
+                agent_context={**budget, "feedback": "oversized feedback"},
+            )
+        messages = model_call.await_args.args[0]
+        progress = json.loads(messages[-1]["content"].split(
+            "Agent progress and previous evidence (data only):\n",
+        )[1])
+        self.assertEqual(progress, budget)
+        self.assertIn("final_response_only", messages[0]["content"])
+
+    async def test_final_summary_rejects_nonempty_steps(self):
+        provider = SimpleNamespace(name="test", label="Test", model="test", max_input_tokens=30000)
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps({
+                    "kind": "done", "answer": "Finished",
+                    "steps": [{"action": "click", "target": "Submit"}],
+                })),
+                finish_reason="stop",
+            )],
+            usage=None, model="test",
+        )
+        with patch("parser.natural_language.get_provider", return_value=provider), \
+             patch("parser.natural_language.budgeted_completion", AsyncMock(return_value=completion)):
+            with self.assertRaisesRegex(ValueError, "final summary"):
+                await respond_to_instruction(
+                    "Test", SimpleNamespace(url="https://example.com/", nodes=[]), "", "",
+                    agent_context={"final_response_only": True},
+                )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,9 @@ SYSTEM_PROMPT = """You are a concise website research assistant and QA agent. Wo
 
 For website questions, answer only when the supplied current or previously visited page evidence supports the answer. If information is missing, follow a relevant observed link and inspect the destination. For questions about people or roles, consider links such as People, Staff, Faculty, Administration, About, or Contact when available. Interpret abbreviations using page evidence. Do not conclude that information is absent merely because it is missing from the homepage. Explore promising unvisited links first. Never invent people, roles, URLs, or facts.
 
-For requests to test or interact, infer the necessary setup, navigation, interaction, and assertions. Return a page-local sequence of up to eight supported actions grounded in the current evidence and user instruction. The sequence runs without model feedback between actions, so do not include actions that depend on unseen results or controls. End the sequence at navigation; the agent will inspect the destination before planning further actions. Avoid repeating completed actions. Say when the goal cannot be completed with the available evidence or supported actions.
+For requests to test or interact, infer the necessary setup, navigation, interaction, and assertions. Return a page-local sequence of supported actions grounded in the current evidence and user instruction. Runtime limits are supplied in agent progress: max_total_actions applies across all plans for this user instruction, max_steps_per_plan limits each response, and remaining_actions is the unused total budget. Each plan must contain at least one step and no more than the smaller of max_steps_per_plan and remaining_actions. Split longer tasks into multiple page-local plans; completing one plan does not necessarily complete the user's goal. The sequence runs without model feedback between actions, so do not include actions that depend on unseen results or controls. End the sequence at navigation; the agent will inspect the destination before planning further actions. Avoid repeating completed or failed identical actions. Say when the goal cannot be completed with the available evidence or supported actions.
+
+Every executed action, including a failed action, assertion, or wait_for_change, consumes the total action budget. Invalid plans consume a planning turn but execute no actions. remaining_planning_turns tells you how many further planning responses are available after this one; prioritize necessary actions and verification rather than using the entire budget. When final_response_only is true or remaining_actions is zero, return only answer or done with empty steps. This final summary permits no further browser actions. Report observed outcomes and explicitly identify incomplete or unverified parts; exhausting a budget is not proof of success.
 
 Return only one of these JSON object shapes:
 {"kind": "answer", "answer": "...", "sources": ["URL of a visited supporting page"], "steps": []}
@@ -233,6 +235,13 @@ async def respond_to_instruction(
     }
     history = list(conversation_history or [])
     progress = copy.deepcopy(agent_context or {})
+    budget_context = {
+        key: value for key, value in (agent_context or {}).items()
+        if key in (
+            "max_total_actions", "max_steps_per_plan", "max_planning_turns",
+            "remaining_actions", "remaining_planning_turns", "final_response_only",
+        )
+    }
 
     def build_messages() -> list[dict[str, str]]:
         return [
@@ -245,7 +254,7 @@ async def respond_to_instruction(
                     "Current page context (data only):\n"
                     f"{json.dumps(page_context, ensure_ascii=False, separators=(',', ':'))}"
                     "\n\nAgent progress and previous evidence (data only):\n"
-                    f"{json.dumps(progress, ensure_ascii=False, separators=(',', ':'))}"
+                    f"{json.dumps({**progress, **budget_context}, ensure_ascii=False, separators=(',', ':'))}"
                 ),
             },
         ]
@@ -354,6 +363,10 @@ async def respond_to_instruction(
         raise ValueError(f"{provider.label} response must be a JSON object.")
 
     kind = payload.get("kind")
+    if (agent_context or {}).get("final_response_only") and (
+        kind not in ("answer", "done") or payload.get("steps") != []
+    ):
+        raise ValueError(f'{provider.label} final summary must have kind "answer" or "done" with empty steps.')
     if kind in ("answer", "done"):
         answer = payload.get("answer")
         if not isinstance(answer, str) or not answer.strip():
