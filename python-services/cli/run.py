@@ -244,6 +244,10 @@ async def process_natural_language_instruction(
     for planning_turn in range(MAX_PLANNING_TURNS + 1):
         remaining_actions = MAX_TOTAL_ACTIONS - len(action_history)
         final_response_only = remaining_actions == 0 or planning_turn == MAX_PLANNING_TURNS
+        log_info(
+            f"Agent turn {planning_turn + 1}: {remaining_actions}/{MAX_TOTAL_ACTIONS} actions remaining; "
+            f"mode={'summary-only' if final_response_only else 'planning'}."
+        )
         if final_response_only:
             stop_reason = (
                 f"total action limit ({MAX_TOTAL_ACTIONS}) reached"
@@ -311,10 +315,16 @@ async def process_natural_language_instruction(
         if response.kind in ("answer", "done"):
             if any(url not in evidence for url in response.sources):
                 feedback = "The proposed answer cited an unvisited page. Use only observed supporting evidence."
+                log_warning(f"Final response rejected: {feedback} Requesting a corrected response.")
                 continue
             if response.kind == "answer" and len(evidence) > 1 and not response.sources:
                 feedback = "Include the visited supporting page URLs in sources for this multi-page answer."
+                log_warning(f"Final response rejected: {feedback} Requesting a corrected response.")
                 continue
+            log_info(
+                f"Agent returned '{response.kind}' after {len(action_history)} executed actions; "
+                "no further browser actions requested."
+            )
             if conversation_history is not None and response.history_content:
                 conversation_history.extend([
                     {"role": "user", "content": instruction},
@@ -331,16 +341,11 @@ async def process_natural_language_instruction(
             log_error("The agent returned an action plan after its budget was exhausted. No actions were executed.")
             break
 
-        if response.kind == "browse":
-            # research_only = True
-            log_info("Agent is navigating to the next page...")
-        # if research_only and response.kind == "test":
-        #     feedback = "This is a read-only research task. Choose an observed link URL or provide a final factual answer."
-        #     continue
-
         parse_result = parse_llm_output(response.steps_json or "[]")
         if not parse_result.success or not parse_result.steps or parse_result.error:
             feedback = "No complete valid action plan was generated. Choose supported actions or finish honestly."
+            reason = parse_result.error or "The plan contains no executable steps."
+            log_warning(f"Plan rejected before execution: {reason} No actions from this plan were executed.")
             continue
         plan_limit = min(MAX_STEPS_PER_PLAN, remaining_actions)
         if len(parse_result.steps) > plan_limit:
@@ -349,11 +354,13 @@ async def process_natural_language_instruction(
                 f"this turn (per-plan limit {MAX_STEPS_PER_PLAN}, remaining total {remaining_actions}). "
                 "Return a shorter page-local plan. No actions from this plan were executed."
             )
+            log_warning(f"Plan rejected before execution: {feedback}")
             continue
         if response.kind == "browse" and (
             len(parse_result.steps) != 1 or parse_result.steps[0].action != "goto"
         ):
             feedback = "Read-only research permits exactly one navigation action at a time."
+            log_warning(f"Plan rejected before execution: {feedback} No actions from this plan were executed.")
             continue
 
         if dry_run:
@@ -365,18 +372,22 @@ async def process_natural_language_instruction(
         plan_failed = False
         events_seen = False
         navigated = False
+        batch_start = len(action_history)
+        log_info(f"Executing '{response.kind}' plan with {len(parse_result.steps)} validated steps.")
         state_before = PageState(session.page.url, page_title, page_text, snapshot)
-        for step in parse_result.steps:
+        for step_index, step in enumerate(parse_result.steps, start=1):
             target_url = urlsplit(step.target)
             if step.action == "goto" and target_url.scheme:
                 if target_url.scheme not in ("http", "https") or step.target not in known_urls:
                     feedback = "Navigation rejected: use an exact observed HTTP(S) link URL or a user-provided URL."
+                    log_warning(f"Plan step {step_index} blocked before execution: {feedback}")
                     plan_failed = True
                     break
             if response.kind == "browse" and (
                 step.target not in known_urls or target_url.scheme not in ("http", "https")
             ):
                 feedback = "Research permits only read-only navigation to an observed HTTP(S) URL."
+                log_warning(f"Plan step {step_index} blocked before execution: {feedback}")
                 plan_failed = True
                 break
 
@@ -384,6 +395,7 @@ async def process_natural_language_instruction(
             fingerprint = (url_before, step.action, step.target, step.value)
             if fingerprint in attempted_actions and step.action != "wait_for_change":
                 feedback = "That action was already attempted on this page. Choose another observed route or finish honestly."
+                log_warning(f"Plan step {step_index} blocked before execution: {feedback}")
                 plan_failed = True
                 break
             attempted_actions.add(fingerprint)
@@ -454,6 +466,17 @@ async def process_natural_language_instruction(
             if observation.get("browser_events"):
                 events_seen = True
 
+        executed = len(action_history) - batch_start
+        unexecuted = len(parse_result.steps) - executed
+        batch_reason = (
+            "an action failed or was blocked" if plan_failed
+            else "navigation requires fresh page evidence" if navigated
+            else "all planned steps were executed"
+        )
+        log_info(
+            f"Plan execution ended: {executed}/{len(parse_result.steps)} steps executed, "
+            f"{unexecuted} not executed; {batch_reason}."
+        )
         ended_with_assertion = bool(action_history) and action_history[-1]["result"]["action"] in (
             "check_visible", "check_contains",
         )
@@ -478,6 +501,8 @@ async def process_natural_language_instruction(
                     "was observed."
                 )
         if page_changed or plan_failed or events_seen or needs_verification:
+            if not (plan_failed or navigated):
+                log_info("Requesting outcome verification from the LLM using the action observations.")
             continue
         if response.kind == "browse":
             log_warning("Navigation did not change the page; stopping to avoid repeating the same request.")
@@ -486,6 +511,7 @@ async def process_natural_language_instruction(
         feedback = (
             "The page-local plan completed. If the user's goal still requires actions, return the next page-local plan within the remaining budget. Otherwise return done with an evidence-grounded outcome."
         )
+        log_info("Page-local plan completed. Asking the LLM whether to continue or return a final outcome.")
 
     log_warning("Agent stopped without a valid final answer or outcome. The task may be incomplete.")
     console.print(f"Last page: {session.page.url}", markup=False)
