@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.dashboard_dto import _result, approval_dto, metrics_dto, run_dto, suite_dto, test_dto
+from api.dashboard_dto import _result, approval_dto, metrics_dto, revision_dto, run_dto, suite_dto, test_dto
 from api.routers.tests import RunSavedPlanRequest, RunSelectedSuiteRequest
 from core.saved_suite import execute_selected_suite
 from core.saved_plan import (
@@ -24,7 +24,10 @@ from parser.test_plan import TestPlan
 from stores.db import get_pool
 from stores.approval_store import save_approval, list_approvals, delete_approval
 from stores.run_store import get_execution_metrics, get_run_by_id, list_runs
-from stores.test_store import delete_test, get_test_by_id, list_tests, save_test
+from stores.test_store import (
+    RevisionConflict, delete_test, get_test_by_id, list_test_revisions,
+    list_tests, save_test, update_test,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +69,12 @@ class DashboardTestRequest(BaseModel):
         if not value.strip():
             raise ValueError("Value must not be blank")
         return value
+
+
+class DashboardTestUpdateRequest(DashboardTestRequest):
+    expectedRevision: int = Field(ge=1, strict=True)
+    variant: Literal["original", "changed", "flaky"]
+    reruns: int = Field(ge=1, le=5, strict=True)
 
 
 class DashboardApprovalRequest(BaseModel):
@@ -155,6 +164,31 @@ async def get_test(test_id: UUID):
     if row is None:
         raise HTTPException(status_code=404, detail="Test not found")
     return test_dto(row)
+
+
+@router.put("/tests/{test_id}")
+async def edit_test(test_id: UUID, body: DashboardTestUpdateRequest):
+    fields = body.model_dump(exclude={"expectedRevision", "plan"})
+    fields["expected_revision"] = body.expectedRevision
+    if "plan" in body.model_fields_set:
+        fields["plan"] = body.plan.model_dump() if body.plan is not None else None
+    try:
+        row = await update_test(str(test_id), fields)
+    except RevisionConflict as exc:
+        return JSONResponse(status_code=409, content={"status": "failed",
+            "errorMessage": "The test changed; reload and review before saving again",
+            "currentRevision": exc.current_revision})
+    if row is None:
+        raise HTTPException(status_code=404, detail="Test not found")
+    return test_dto(row)
+
+
+@router.get("/tests/{test_id}/revisions")
+async def get_revisions(test_id: UUID):
+    history = await list_test_revisions(str(test_id))
+    if not history and not await get_test_by_id(str(test_id)):
+        raise HTTPException(status_code=404, detail="Test not found")
+    return [revision_dto(row) for row in history]
 
 
 @router.post("/tests/run-selected-plans")

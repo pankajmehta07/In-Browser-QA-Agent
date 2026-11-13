@@ -340,3 +340,39 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["totalRuns"], 0)
         self.assertEqual(response.json()["savedTests"], 0)
         self.assertIsNone(response.json()["passRate"])
+
+    async def test_compatibility_edit_conflict_noop_and_retained_revisions(self):
+        from httpx import ASGITransport, AsyncClient
+        from api.main import app
+        plan = {"schema_version": 1, "steps": [{"action": "check_visible", "target": "Login"}]}
+        async with self.version_store():
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                created = await client.post("/compat/tests", json={"name": "Original", "instruction": "Check Login", "plan": plan})
+                self.assertEqual(created.status_code, 200)
+                saved = created.json()
+                path = f"/compat/tests/{saved['id']}"
+                body = {"name": "Original", "instruction": "Check Login", "variant": "original", "reruns": 1, "expectedRevision": 1}
+                noop = await client.put(path, json=body)
+                self.assertEqual(noop.status_code, 200)
+                self.assertEqual(noop.json()["revision"], 1)
+                self.assertIsNotNone(noop.json()["plan"])
+                changed = await client.put(path, json={**body, "instruction": "Check Dashboard"})
+                self.assertEqual(changed.json()["revision"], 2)
+                self.assertIsNone(changed.json()["plan"])
+                stale = await client.put(path, json={**body, "name": "Must not overwrite"})
+                self.assertEqual(stale.status_code, 409)
+                self.assertEqual(stale.json()["currentRevision"], 2)
+                current = (await client.get(path)).json()
+                self.assertEqual(current["name"], "Original")
+                restored = await client.put(path, json={**body, "expectedRevision": 2, "plan": plan})
+                self.assertEqual(restored.json()["revision"], 3)
+                self.assertIsNotNone(restored.json()["plan"])
+                await client.delete(path)
+                history = await client.get(path + "/revisions")
+                self.assertEqual(history.status_code, 200)
+                self.assertEqual([row["revision"] for row in history.json()], [3, 2, 1])
+                self.assertTrue(all(row["testId"] is None for row in history.json()))
+                self.assertTrue(all(row["originalTestId"] == saved["id"] for row in history.json()))
+                self.assertEqual(history.json()[-1]["snapshot"]["instruction"], "Check Login")
+                self.assertEqual((await client.get(path)).status_code, 404)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM test_revisions"), 3)

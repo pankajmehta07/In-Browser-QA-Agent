@@ -32,6 +32,12 @@ def test_dto(row):
             "revision": row.get("revision", 1), "plan": deepcopy(row.get("plan"))}
 
 
+def revision_dto(row):
+    return {"id": str(row["id"]), "testId": str(row["test_id"]) if row.get("test_id") else None,
+            "originalTestId": str(row["original_test_id"]), "revision": row["revision"],
+            "createdAt": _date(row["created_at"]), "snapshot": deepcopy(row["snapshot"])}
+
+
 def approval_dto(row):
     return {"id": str(row["id"]), "savedAt": _date(row["saved_at"]),
             "runId": str(row["run_id"]) if row.get("run_id") else None,
