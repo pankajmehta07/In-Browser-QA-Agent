@@ -1,9 +1,9 @@
 # Database migrations
 
-This PR adds migration infrastructure only. It does not cut the dashboard over to
-FastAPI, import the local prototype, add plan revisions, or change API behavior.
-It depends on the project CI PR. Versioned plans and a dry-run importer are
-separate follow-up PRs, not features delivered here.
+The migration infrastructure depends on the project CI PR. It does not cut the
+dashboard over to FastAPI or import the local prototype. Migration 0002 adds
+[versioned test definitions](versioned-test-plans.md) in a dependent feature PR;
+the dry-run importer and execution cutover remain separate work.
 
 ## How it works
 
@@ -11,6 +11,8 @@ separate follow-up PRs, not features delivered here.
   Python Docker build context.
 - `0001_initial.sql` establishes the current shared `tests`, `runs`, and
   `healed_selectors` schema. It can adopt an existing compatible installation.
+- `0002_test_revisions.sql` adds plan storage and revision snapshots without
+  replacing existing tests or runs. See the versioned-plan API documentation above.
 - `public.schema_migrations` records each version, filename, SHA-256 checksum and
   application time. Checksums normalize CRLF/LF for Windows/Linux checkouts.
 - Applied SQL files are immutable. Add a higher numbered migration for changes.

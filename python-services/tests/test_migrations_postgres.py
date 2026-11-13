@@ -6,11 +6,14 @@ import sys
 import tempfile
 import unittest
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import psycopg
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from psycopg_pool import AsyncConnectionPool
 
 from stores.migrations import migrate
 
@@ -50,7 +53,7 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         return (await cursor.fetchone())[0]
 
     async def test_status_does_not_create_ledger_or_tables(self):
-        self.assertEqual([item.version for item in await migrate(self.connection)], [1])
+        self.assertEqual([item.version for item in await migrate(self.connection)], [1, 2])
         self.assertIsNone(await self.scalar("SELECT to_regclass('public.schema_migrations')"))
         self.assertIsNone(await self.scalar("SELECT to_regclass('public.tests')"))
 
@@ -59,16 +62,17 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         await self.connection.execute("INSERT INTO tests (name, instruction) VALUES ('Keep me', '[]')")
         self.assertEqual(await migrate(self.connection, apply=True), [])
         self.assertEqual(await self.scalar("SELECT name FROM tests"), "Keep me")
-        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM schema_migrations"), 1)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM schema_migrations"), 2)
 
     async def test_adopts_legacy_schema_and_preserves_history_on_delete(self):
-        baseline = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
+        baseline = Path(__file__).resolve().parents[1] / "migrations" / "0001_initial.sql"
         await self.connection.execute(baseline.read_text(encoding="utf-8"))
         test_id = uuid.uuid4()
         await self.connection.execute("INSERT INTO tests (id, name, instruction) VALUES (%s, 'Legacy', '[]')", (test_id,))
         await self.connection.execute("INSERT INTO runs (test_id, status, result_json) VALUES (%s, 'passed', '{\"evidence\":\"original\"}')", (test_id,))
         await migrate(self.connection, apply=True)
         self.assertEqual(await self.scalar("SELECT name FROM tests"), "Legacy")
+        self.assertEqual(await self.scalar("SELECT snapshot->>'name' FROM test_revisions"), "Legacy")
         await self.connection.execute("DELETE FROM tests WHERE id = %s", (test_id,))
         self.assertIsNone(await self.scalar("SELECT test_id FROM runs"))
         self.assertEqual(await self.scalar("SELECT result_json->>'evidence' FROM runs"), "original")
@@ -78,12 +82,13 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             from stores.migrations import DEFAULT_DIRECTORY
             target = Path(directory)
-            (target / "0001_initial.sql").write_text((DEFAULT_DIRECTORY / "0001_initial.sql").read_text(), encoding="utf-8")
-            (target / "0002_broken.sql").write_text("CREATE TABLE must_rollback (id INT); SELECT 1/0;", encoding="utf-8")
+            for source in DEFAULT_DIRECTORY.glob("*.sql"):
+                (target / source.name).write_text(source.read_text(), encoding="utf-8")
+            (target / "0003_broken.sql").write_text("CREATE TABLE must_rollback (id INT); SELECT 1/0;", encoding="utf-8")
             with self.assertRaises(psycopg.errors.DivisionByZero):
                 await migrate(self.connection, target, apply=True)
         self.assertIsNone(await self.scalar("SELECT to_regclass('public.must_rollback')"))
-        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM schema_migrations"), 1)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM schema_migrations"), 2)
 
     async def test_checksum_conflict_prevents_further_changes(self):
         await migrate(self.connection, apply=True)
@@ -96,5 +101,76 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
             make_conninfo(os.environ["MIGRATION_TEST_ADMIN_DSN"], dbname=self.database), autocommit=True
         ) as other:
             changes = await asyncio.gather(migrate(self.connection, apply=True), migrate(other, apply=True))
-        self.assertEqual(sorted(len(items) for items in changes), [0, 1])
-        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM schema_migrations"), 1)
+        self.assertEqual(sorted(len(items) for items in changes), [0, 2])
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM schema_migrations"), 2)
+
+    async def test_fresh_init_and_migrations_are_compatible(self):
+        fresh = Path(__file__).resolve().parents[2] / "db" / "init.sql"
+        await self.connection.execute(fresh.read_text(encoding="utf-8"))
+        await self.connection.execute("INSERT INTO tests (name, instruction) VALUES ('Fresh', 'Click Login')")
+        self.assertEqual(await self.scalar("SELECT revision FROM test_revisions"), 1)
+        await migrate(self.connection, apply=True)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM test_revisions"), 1)
+
+    @asynccontextmanager
+    async def version_store(self):
+        from stores import test_store
+        await migrate(self.connection, apply=True)
+        async with AsyncConnectionPool(
+            make_conninfo(os.environ["MIGRATION_TEST_ADMIN_DSN"], dbname=self.database), open=False
+        ) as pool:
+            with patch("stores.test_store.get_pool", new_callable=AsyncMock, return_value=pool):
+                yield test_store
+
+    async def test_store_records_create_edit_and_noop_without_duplicate_revision(self):
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Original", "instruction": "Click Login"})
+            self.assertEqual(saved["revision"], 1)
+            updated = await store.update_test(str(saved["id"]), {"name": "Edited", "expected_revision": 1})
+            self.assertEqual(updated["revision"], 2)
+            unchanged = await store.update_test(str(saved["id"]), {"name": "Edited", "expected_revision": 2})
+            self.assertEqual(unchanged["revision"], 2)
+            history = await store.list_test_revisions(str(saved["id"]))
+        self.assertEqual([item["snapshot"]["name"] for item in history], ["Edited", "Original"])
+
+    async def test_simultaneous_edit_rejects_stale_writer(self):
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Original", "instruction": "Click Login"})
+            outcomes = await asyncio.gather(
+                store.update_test(str(saved["id"]), {"name": "First", "expected_revision": 1}),
+                store.update_test(str(saved["id"]), {"name": "Second", "expected_revision": 1}),
+                return_exceptions=True,
+            )
+            self.assertEqual(sum(isinstance(item, store.RevisionConflict) for item in outcomes), 1)
+            self.assertEqual(len(await store.list_test_revisions(str(saved["id"]))), 2)
+
+    async def test_plan_roundtrip_clear_and_retained_history_after_delete(self):
+        plan = {"schema_version": 1, "setup": [], "steps": [{"action": "click", "target": "Login", "value": None}], "cleanup": []}
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Plan", "instruction": "Click Login", "plan": plan})
+            self.assertEqual(saved["plan"], plan)
+            updated = await store.update_test(str(saved["id"]), {"instruction": "Click Projects", "expected_revision": 1})
+            self.assertIsNone(updated["plan"])
+            await store.delete_test(str(saved["id"]))
+            history = await store.list_test_revisions(str(saved["id"]))
+        self.assertEqual(len(history), 2)
+        self.assertIsNone(history[0]["test_id"])
+        self.assertEqual(history[1]["snapshot"]["plan"], plan)
+
+    async def test_direct_legacy_sql_update_also_creates_revision(self):
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Legacy", "instruction": "Click Login"})
+            await self.connection.execute("UPDATE tests SET name = 'Legacy edited' WHERE id = %s", (saved["id"],))
+            history = await store.list_test_revisions(str(saved["id"]))
+        self.assertEqual([item["revision"] for item in history], [2, 1])
+
+    async def test_snapshot_failure_rolls_back_definition_edit(self):
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Original", "instruction": "Click Login"})
+            await self.connection.execute("ALTER TABLE test_revisions ADD CONSTRAINT reject_new_snapshot CHECK (revision < 2)")
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                await store.update_test(str(saved["id"]), {"name": "Must roll back", "expected_revision": 1})
+            current = await store.get_test_by_id(str(saved["id"]))
+            self.assertEqual(current["name"], "Original")
+            self.assertEqual(current["revision"], 1)
+            self.assertEqual(len(await store.list_test_revisions(str(saved["id"]))), 1)
