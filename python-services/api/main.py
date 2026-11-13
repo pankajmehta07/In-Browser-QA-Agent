@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api.routers import health, tests, runs, approvals, instructions, audit
+from api.routers import health, tests, runs, approvals, instructions, audit, compat
 from stores.db import get_pool, close_pool
 from utils.logger import log_info, log_success
 
@@ -33,3 +33,4 @@ app.include_router(runs.router)
 app.include_router(approvals.router)
 app.include_router(instructions.router)
 app.include_router(audit.router)
+app.include_router(compat.router)

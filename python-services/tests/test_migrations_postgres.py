@@ -242,3 +242,28 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 2)
         cursor = await self.connection.execute("SELECT result_json->'definition_snapshot'->>'name' FROM runs")
         self.assertEqual({row[0] for row in await cursor.fetchall()}, {"One", "Two"})
+
+    async def test_compatibility_routes_roundtrip_real_records_and_retain_history(self):
+        from httpx import ASGITransport, AsyncClient
+        from api.main import app
+        from stores.run_store import save_run
+        async with self.version_store() as store:
+            pool = await store.get_pool()
+            with patch("api.routers.compat.get_pool", new_callable=AsyncMock, return_value=pool), \
+                 patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=pool):
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                    self.assertEqual((await client.get("/compat/health")).status_code, 200)
+                    response = await client.post("/compat/tests", json={"name": "Roundtrip", "instruction": "Click Login", "reruns": 1})
+                    self.assertEqual(response.status_code, 200)
+                    test_id = response.json()["id"]
+                    self.assertIn("createdAt", response.json())
+                    self.assertEqual((await client.get("/compat/tests")).json()[0]["id"], test_id)
+                    saved = await save_run({"status": "failed", "durationMs": 3, "result": {"status": "failed", "steps": [{"action": "click", "target": "Login", "status": "failed", "duration_ms": 3}]}})
+                    result = await client.get(f"/compat/runs/{saved['id']}")
+                    self.assertEqual(result.json()["result"]["steps"][0]["durationMs"], 3)
+                    deleted = await client.delete(f"/compat/tests/{test_id}")
+                    self.assertEqual(deleted.json(), {"status": "passed", "deletedId": test_id})
+                    self.assertEqual((await client.get(f"/compat/runs/{saved['id']}")).status_code, 200)
+                    self.assertEqual((await client.get(f"/tests/{test_id}")).json(), {"detail": "Test not found"})
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 1)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM test_revisions"), 1)
