@@ -41,6 +41,21 @@ def approval_dto(row):
             "confidence": _number(row.get("confidence")), "strategy": row.get("strategy")}
 
 
+def metrics_dto(row):
+    fields = {"totalRuns": "total_runs", "passedRuns": "passed_runs", "failedRuns": "failed_runs",
+              "flakyRuns": "flaky_runs", "healedRuns": "healed_runs", "savedTests": "saved_tests"}
+    counts = {name: row[column] for name, column in fields.items()}
+    if (any(type(value) is not int or value < 0 for value in counts.values())
+            or counts["passedRuns"] + counts["failedRuns"] + counts["flakyRuns"] != counts["totalRuns"]
+            or counts["healedRuns"] > counts["totalRuns"]):
+        raise ValueError("Invalid aggregate counts")
+    total = counts["totalRuns"]
+    # Integer half-up rounding matches the dashboard's Math.round percentages.
+    rate = (200 * counts["passedRuns"] + total) // (2 * total) if total else None
+    return {"scope": "all_time", "unit": "saved_run_records", **counts,
+            "passRate": rate, "measuredAt": _date(row["measured_at"])}
+
+
 def _root_cause(value):
     if value is None:
         return None

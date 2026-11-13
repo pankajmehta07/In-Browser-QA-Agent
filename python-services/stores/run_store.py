@@ -129,3 +129,21 @@ async def get_run_by_id(run_id: str) -> dict | None:
             row = await cur.fetchone()
 
     return dict(row) if row else None
+
+
+async def get_execution_metrics() -> dict:
+    """Aggregate saved records in one statement snapshot, without loading JSON."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("""
+                SELECT COUNT(*) AS total_runs,
+                       COUNT(*) FILTER (WHERE status = 'passed') AS passed_runs,
+                       COUNT(*) FILTER (WHERE status = 'failed') AS failed_runs,
+                       COUNT(*) FILTER (WHERE status = 'flaky') AS flaky_runs,
+                       COUNT(*) FILTER (WHERE was_healed IS TRUE) AS healed_runs,
+                       (SELECT COUNT(*) FROM tests) AS saved_tests,
+                       statement_timestamp() AS measured_at
+                FROM runs
+            """)
+            return dict(await cur.fetchone())

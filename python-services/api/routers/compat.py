@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.dashboard_dto import _result, approval_dto, run_dto, suite_dto, test_dto
+from api.dashboard_dto import _result, approval_dto, metrics_dto, run_dto, suite_dto, test_dto
 from api.routers.tests import RunSavedPlanRequest, RunSelectedSuiteRequest
 from core.saved_suite import execute_selected_suite
 from core.saved_plan import (
@@ -23,7 +23,7 @@ from core.saved_plan import (
 from parser.test_plan import TestPlan
 from stores.db import get_pool
 from stores.approval_store import save_approval, list_approvals, delete_approval
-from stores.run_store import get_run_by_id, list_runs
+from stores.run_store import get_execution_metrics, get_run_by_id, list_runs
 from stores.test_store import delete_test, get_test_by_id, list_tests, save_test
 
 
@@ -142,6 +142,11 @@ async def health():
 @router.get("/tests")
 async def get_tests():
     return [test_dto(row) for row in await list_tests()]
+
+
+@router.get("/metrics")
+async def get_metrics():
+    return metrics_dto(await get_execution_metrics())
 
 
 @router.get("/tests/{test_id}")

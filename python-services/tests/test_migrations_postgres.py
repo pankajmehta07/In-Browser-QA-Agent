@@ -298,3 +298,45 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.get(f"/compat/runs/{run['id']}")).status_code, 200)
         self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 1)
         self.assertEqual(await self.scalar("SELECT decision FROM healed_selectors"), "rejected")
+
+    async def test_metrics_count_all_records_beyond_history_limit_and_retain_deleted_test_runs(self):
+        from httpx import ASGITransport, AsyncClient
+        from api.main import app
+        async with self.version_store() as store:
+            first = await store.save_test({"name": "One", "instruction": "Check Login"})
+            await store.save_test({"name": "Two", "instruction": "Check Login"})
+            await self.connection.execute("""
+                INSERT INTO runs (test_id, status, was_healed, run_count, result_json)
+                SELECT %s, CASE WHEN n <= 40 THEN 'passed' WHEN n <= 60 THEN 'failed' ELSE 'flaky' END,
+                       n %% 3 = 0, 10, '{}'::jsonb FROM generate_series(1, 64) n
+            """, (first["id"],))
+            with patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=await store.get_pool()):
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                    response = await client.get("/compat/metrics")
+                    self.assertEqual(response.status_code, 200)
+                    metrics = response.json()
+                    self.assertEqual(metrics["totalRuns"], 64)
+                    self.assertEqual(metrics["passedRuns"], 40)
+                    self.assertEqual(metrics["failedRuns"], 20)
+                    self.assertEqual(metrics["flakyRuns"], 4)
+                    self.assertEqual(metrics["healedRuns"], 21)
+                    self.assertEqual(metrics["savedTests"], 2)
+                    self.assertEqual(metrics["passRate"], 63)
+                    self.assertEqual(len((await client.get("/compat/runs")).json()), 50)
+                    await store.delete_test(str(first["id"]))
+                    after = (await client.get("/compat/metrics")).json()
+                    self.assertEqual(after["savedTests"], 1)
+                    self.assertEqual(after["totalRuns"], 64)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs WHERE test_id IS NULL"), 64)
+
+    async def test_metrics_for_empty_database(self):
+        from httpx import ASGITransport, AsyncClient
+        from api.main import app
+        async with self.version_store() as store:
+            with patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=await store.get_pool()):
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                    response = await client.get("/compat/metrics")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["totalRuns"], 0)
+        self.assertEqual(response.json()["savedTests"], 0)
+        self.assertIsNone(response.json()["passRate"])
