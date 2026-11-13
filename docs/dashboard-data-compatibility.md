@@ -68,11 +68,13 @@ For writes, inspect the library before retrying after an ambiguous failure.
 This error wrapper is scoped to the new routes; it does not globally replace native
 FastAPI validation errors. Unknown/unimplemented paths retain normal FastAPI 404s.
 
-Artifact serving is deliberately absent. Known screenshot/trace references and
+Embedded artifact links are deliberately absent. Known screenshot/trace references and
 filesystem path fields are not converted into working image/download links.
 Available-but-unexposed artifacts are marked `artifactAvailability: not_exposed`.
 The current UI does not display that marker yet. This mapping is not a general
 secret/path redaction system for arbitrary diagnostic text or test values.
+The separately gated run-linked PNG endpoint is documented in
+`dashboard-run-screenshots.md`; it does not change the DTO marker or expose traces.
 
 ## Readiness and cutover gates
 

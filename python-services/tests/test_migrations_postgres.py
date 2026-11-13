@@ -376,3 +376,26 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(history.json()[-1]["snapshot"]["instruction"], "Check Login")
                 self.assertEqual((await client.get(path)).status_code, 404)
         self.assertEqual(await self.scalar("SELECT COUNT(*) FROM test_revisions"), 3)
+
+    async def test_run_linked_screenshot_uses_stored_reference_and_preserves_history(self):
+        import base64
+        from httpx import ASGITransport, AsyncClient
+        from api.main import app
+        from stores.run_store import save_run
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1sAAAAASUVORK5CYII=")
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "failure.png"
+            file.write_bytes(png)
+            async with self.version_store() as store:
+                with patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=await store.get_pool()), \
+                     patch.dict(os.environ, {"ENABLE_RUN_SCREENSHOTS": "true", "RUN_SCREENSHOT_ROOT": directory}):
+                    saved = await save_run({"status": "failed", "screenshotPath": str(file), "result": {"status": "failed", "steps": []}})
+                    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                        path = f"/compat/runs/{saved['id']}/screenshot"
+                        response = await client.get(path)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(response.content, png)
+                        file.unlink()
+                        self.assertEqual((await client.get(path)).status_code, 404)
+                        self.assertEqual((await client.get(f"/compat/runs/{saved['id']}")).status_code, 200)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 1)

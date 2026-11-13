@@ -9,12 +9,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.dashboard_dto import _result, approval_dto, metrics_dto, revision_dto, run_dto, suite_dto, test_dto
 from api.routers.tests import RunSavedPlanRequest, RunSelectedSuiteRequest
+from api.run_screenshots import read_screenshot, ScreenshotConfigurationError, ScreenshotUnavailable
 from core.saved_suite import execute_selected_suite
 from core.saved_plan import (
     PlanPersistenceError, SavedPlanNotFound, _origin,
@@ -241,6 +243,29 @@ async def get_run(run_id: UUID):
     if row is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run_dto(row)
+
+
+@router.get("/runs/{run_id}/screenshot")
+async def get_run_screenshot(run_id: UUID):
+    if os.getenv("ENABLE_RUN_SCREENSHOTS", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Run screenshot access is disabled")
+    root = os.getenv("RUN_SCREENSHOT_ROOT", "").strip()
+    if not root:
+        raise HTTPException(status_code=503, detail="Run screenshot storage is not configured")
+    row = await get_run_by_id(str(run_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Run screenshot is unavailable")
+    try:
+        content = await run_in_threadpool(read_screenshot, row.get("screenshot_path"), root)
+    except ScreenshotConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Run screenshot storage is not configured") from exc
+    except ScreenshotUnavailable as exc:
+        raise HTTPException(status_code=404, detail="Run screenshot is unavailable") from exc
+    return Response(content=content, media_type="image/png", headers={
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": f'inline; filename="failure-{run_id}.png"',
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    })
 
 
 def execution_error(status_code, message, state):
