@@ -4,6 +4,10 @@ An explainable browser QA agent that converts constrained English instructions i
 
 This project is being developed as a Fusemachines AI Fellowship capstone project.
 
+## Backend Integration Status
+
+The shared repository currently contains both the Express dashboard API and a separate FastAPI service. The proposed [FastAPI integration contract](docs/fastapi-integration-contracts.md) describes how to extend `python-services/`, preserve existing Python features, migrate data safely, and connect the dashboard. It is a review proposal, not a completed runtime migration; this documentation does not change startup commands or deployment routing.
+
 ## Project Members
 
 | Name | Email |
