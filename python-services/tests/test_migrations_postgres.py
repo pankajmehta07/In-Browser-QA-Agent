@@ -267,3 +267,34 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.get(f"/tests/{test_id}")).json(), {"detail": "Test not found"})
         self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 1)
         self.assertEqual(await self.scalar("SELECT COUNT(*) FROM test_revisions"), 1)
+
+    async def test_compatibility_approvals_roundtrip_and_resolver_memory(self):
+        from httpx import ASGITransport, AsyncClient
+        from api.main import app
+        from stores.run_store import save_run
+        from stores.approval_store import find_approved_mapping
+        old, new = 'role=button[name="Login"]', 'role=button[name="Sign In"]'
+        step = {"name": "Click Login", "status": "passed", "wasHealed": True,
+                "oldSelector": old, "newSelector": new}
+        async with self.version_store() as store:
+            pool = await store.get_pool()
+            with patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=pool), \
+                 patch("stores.approval_store.get_pool", new_callable=AsyncMock, return_value=pool):
+                run = await save_run({"status": "passed", "result": {"status": "passed", "steps": [step]}})
+                body = {"runId": str(run["id"]), "stepName": "Click Login", "oldSelector": old,
+                        "newSelector": new, "oldTarget": "Login", "newTarget": "Sign In", "decision": "rejected"}
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                    rejected = await client.post("/compat/approvals", json=body)
+                    self.assertEqual(rejected.status_code, 200)
+                    self.assertIsNone(await find_approved_mapping("Login"))
+                    approved = await client.post("/compat/approvals", json={**body, "decision": "approved"})
+                    self.assertEqual(approved.status_code, 200)
+                    self.assertEqual(approved.json()["runId"], str(run["id"]))
+                    self.assertEqual((await find_approved_mapping(" login "))["new_target"], "Sign In")
+                    self.assertEqual(len((await client.get("/compat/approvals")).json()), 2)
+                    removed = await client.delete(f"/compat/approvals/{approved.json()['id']}")
+                    self.assertEqual(removed.status_code, 200)
+                    self.assertIsNone(await find_approved_mapping("Login"))
+                    self.assertEqual((await client.get(f"/compat/runs/{run['id']}")).status_code, 200)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 1)
+        self.assertEqual(await self.scalar("SELECT decision FROM healed_selectors"), "rejected")

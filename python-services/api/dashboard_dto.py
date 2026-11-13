@@ -32,6 +32,15 @@ def test_dto(row):
             "revision": row.get("revision", 1), "plan": deepcopy(row.get("plan"))}
 
 
+def approval_dto(row):
+    return {"id": str(row["id"]), "savedAt": _date(row["saved_at"]),
+            "runId": str(row["run_id"]) if row.get("run_id") else None,
+            "stepName": row["step_name"], "oldSelector": row.get("old_selector"),
+            "newSelector": row.get("new_selector"), "oldTarget": row["old_target"],
+            "newTarget": row["new_target"], "decision": row["decision"],
+            "confidence": _number(row.get("confidence")), "strategy": row.get("strategy")}
+
+
 def _root_cause(value):
     if value is None:
         return None

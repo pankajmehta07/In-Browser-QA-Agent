@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import uuid
 from typing import Literal
 from uuid import UUID
@@ -12,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.dashboard_dto import _result, run_dto, suite_dto, test_dto
+from api.dashboard_dto import _result, approval_dto, run_dto, suite_dto, test_dto
 from api.routers.tests import RunSavedPlanRequest, RunSelectedSuiteRequest
 from core.saved_suite import execute_selected_suite
 from core.saved_plan import (
@@ -21,6 +22,7 @@ from core.saved_plan import (
 )
 from parser.test_plan import TestPlan
 from stores.db import get_pool
+from stores.approval_store import save_approval, list_approvals, delete_approval
 from stores.run_store import get_run_by_id, list_runs
 from stores.test_store import delete_test, get_test_by_id, list_tests, save_test
 
@@ -64,6 +66,63 @@ class DashboardTestRequest(BaseModel):
         if not value.strip():
             raise ValueError("Value must not be blank")
         return value
+
+
+class DashboardApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    runId: UUID
+    stepName: str = Field(min_length=1, max_length=1000)
+    oldSelector: str = Field(min_length=1, max_length=10000)
+    newSelector: str = Field(min_length=1, max_length=10000)
+    oldTarget: str = Field(min_length=1, max_length=10000)
+    newTarget: str = Field(min_length=1, max_length=10000)
+    decision: Literal["approved", "rejected"]
+    confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    strategy: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("stepName", "oldSelector", "newSelector", "oldTarget", "newTarget")
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("Value must not be blank")
+        return value
+
+
+def selector_target(selector):
+    # Match the dashboard's displayed target extraction, not a CSS parser.
+    match = re.search(r'name="([^"]+)"', selector)
+    return match[1] if match else selector
+
+
+@router.get("/approvals")
+async def get_approvals():
+    return [approval_dto(row) for row in await list_approvals()]
+
+
+@router.post("/approvals")
+async def create_approval(body: DashboardApprovalRequest):
+    run = await get_run_by_id(str(body.runId))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Saved run not found")
+    try:
+        steps = _result(run["result_json"])["steps"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail="Saved run evidence cannot be reviewed for this decision") from exc
+    matches = [step for step in steps if step.get("wasHealed") is True
+               and step.get("name") == body.stepName
+               and step.get("oldSelector") == body.oldSelector
+               and step.get("newSelector") == body.newSelector]
+    if (len(matches) != 1 or body.oldTarget != selector_target(body.oldSelector)
+            or body.newTarget != selector_target(body.newSelector)):
+        raise HTTPException(status_code=409, detail="Decision must match one recorded healed step and its selector targets")
+    return approval_dto(await save_approval(body.model_dump(mode="json")))
+
+
+@router.delete("/approvals/{approval_id}")
+async def remove_approval(approval_id: UUID):
+    if not await delete_approval(str(approval_id)):
+        raise HTTPException(status_code=404, detail="Approval not found")
+    return {"status": "passed", "deletedId": str(approval_id)}
 
 
 async def database_ready():

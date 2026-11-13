@@ -93,11 +93,14 @@ trusted development/staging access; this PR adds no authentication or team owner
 The single saved-plan execution adapter is documented in
 `dashboard-plan-execution.md`; selected-suite adaptation is documented in
 `dashboard-suite-execution.md`. Remaining gates include instruction execution
-DTO adapters, approved selector-decision routes,
+DTO adapters, origin-scoped approval memory and access control,
 authorized artifact serving, all-time execution metrics, durable jobs where needed,
 and real dashboard/FastAPI/PostgreSQL/browser acceptance before a dedicated proxy
 cutover PR. Recent-run list length is not an all-time total and must not be used as
 one. No existing dashboard statistics are rewired by this PR.
+
+The compatibility healing-decision routes and their current global-memory limits
+are documented in `dashboard-healing-approvals.md`.
 
 No new schema migration or runtime feature flag is introduced. Existing
 `ENABLE_SAVED_PLAN_RUNS` behavior applies only to native execution, not these CRUD
