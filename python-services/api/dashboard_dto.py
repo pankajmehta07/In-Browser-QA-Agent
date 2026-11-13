@@ -1,6 +1,7 @@
 """Explicit dashboard aliases for known saved-result schemas, not a key renamer."""
 
 import math
+from uuid import UUID
 from copy import deepcopy
 from datetime import datetime
 from decimal import Decimal
@@ -120,3 +121,45 @@ def run_dto(row):
             "rootCauseTitle": row.get("root_cause_title"),
             "accessibilityIssueCount": row.get("accessibility_issue_count", 0),
             "accessibilityWarningCount": row.get("accessibility_warning_count", 0), "result": result}
+
+
+def suite_dto(report):
+    """Adapt the transient selected-suite report, not a persisted run row."""
+    tests = []
+    for entry in report["tests"]:
+        state = entry["state"]
+        if state not in {"completed", "completed_unsaved", "interrupted", "not_run"}:
+            raise ValueError("Invalid suite state")
+        item = {"testId": str(UUID(entry["test_id"])), "testRevision": entry["test_revision"],
+                "state": state, "status": entry["status"], "savedRunId": None}
+        if state == "completed":
+            result = _result(entry["result"])
+            if item["status"] not in {"passed", "failed"} or result.get("status") != item["status"]:
+                raise ValueError("Invalid completed suite result")
+            item["savedRunId"] = str(UUID(entry["saved_run_id"]))
+            result["savedRunId"] = item["savedRunId"]
+            item["result"] = result
+        elif item["status"] != "unknown":
+            raise ValueError("Uncompleted execution has no assertion outcome")
+        if state in {"completed_unsaved", "interrupted"}:
+            item["errorMessage"] = (
+                "Execution finished but its result could not be saved. Do not automatically rerun."
+                if state == "completed_unsaved" else
+                "Execution was interrupted; website changes may have occurred. Review before retrying."
+            )
+        tests.append(item)
+    counts = {"selected": len(tests), "completed": sum(item["state"] == "completed" for item in tests),
+              "passed": sum(item["status"] == "passed" for item in tests),
+              "failed": sum(item["status"] == "failed" for item in tests),
+              "errors": sum(item["state"] in {"completed_unsaved", "interrupted"} for item in tests),
+              "notRun": sum(item["state"] == "not_run" for item in tests)}
+    status = "incomplete" if counts["errors"] or counts["notRun"] else "failed" if counts["failed"] else "passed"
+    if not tests or report["status"] != status:
+        raise ValueError("Suite status disagrees with outcomes")
+    result = {"type": "selected_plan_suite", "suiteId": str(UUID(report["suite_id"])), "status": status,
+              "stopReason": report["stop_reason"], "safeToRetry": False, "counts": counts, "tests": tests,
+              "startedAt": report["started_at"], "finishedAt": report["finished_at"],
+              "durationMs": _number(report["duration_ms"])}
+    if status == "incomplete":
+        result["errorMessage"] = "Suite stopped early. Review completed results and website state before retrying."
+    return result

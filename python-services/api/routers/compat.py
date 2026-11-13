@@ -12,8 +12,9 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.dashboard_dto import _result, run_dto, test_dto
-from api.routers.tests import RunSavedPlanRequest
+from api.dashboard_dto import _result, run_dto, suite_dto, test_dto
+from api.routers.tests import RunSavedPlanRequest, RunSelectedSuiteRequest
+from core.saved_suite import execute_selected_suite
 from core.saved_plan import (
     PlanPersistenceError, SavedPlanNotFound, _origin,
     execute_prepared_plan, prepare_saved_plan,
@@ -90,6 +91,30 @@ async def get_test(test_id: UUID):
     if row is None:
         raise HTTPException(status_code=404, detail="Test not found")
     return test_dto(row)
+
+
+@router.post("/tests/run-selected-plans")
+async def run_selected_plans(body: RunSelectedSuiteRequest):
+    if os.getenv("ENABLE_SAVED_PLAN_RUNS", "false").lower() != "true":
+        return execution_error(403, "Saved-plan execution is disabled", "not_started")
+    target = os.getenv("TARGET_APP_URL", "http://127.0.0.1:5173/")
+    try:
+        report = await execute_selected_suite(body.tests, target)
+    except SavedPlanNotFound:
+        return execution_error(404, "A selected test or revision was not found; no browser was started", "not_started")
+    except ValueError:
+        return execution_error(409, "Review every selected plan, revision and the server target before execution", "not_started")
+    except Exception as exc:
+        error_id = str(uuid.uuid4())
+        logger.error("Compatibility suite %s failed: %s", error_id, type(exc).__name__)
+        return execution_error(503, f"Suite outcome could not be confirmed. Review history before retrying. Reference: {error_id}", "unknown")
+    try:
+        result = suite_dto(report)
+    except Exception as exc:
+        error_id = str(uuid.uuid4())
+        logger.error("Compatibility suite mapping %s failed: %s", error_id, type(exc).__name__)
+        return execution_error(503, f"Suite results could not be displayed. Inspect run history before retrying. Reference: {error_id}", "unknown")
+    return JSONResponse(status_code=503 if result["status"] == "incomplete" else 200, content=result)
 
 
 @router.post("/tests")

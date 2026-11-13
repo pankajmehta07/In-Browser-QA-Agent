@@ -60,8 +60,9 @@ does not introduce authentication or per-team ownership.
 
 The dashboard proxy and Express endpoints are untouched. The dashboard does not
 call this new route yet. Its existing run request is not interchangeable with this
-explicit revision/confirmation contract. Selected-suite response adaptation,
-instruction execution, approvals, authorized artifacts, metrics and deployment
+explicit revision/confirmation contract. Selected-suite response adaptation is
+documented in `dashboard-suite-execution.md`. Instruction execution, approvals,
+authorized artifacts, metrics and deployment
 acceptance remain separate work before proxy cutover.
 
 The existing executor persists each completed result once and closes its browser

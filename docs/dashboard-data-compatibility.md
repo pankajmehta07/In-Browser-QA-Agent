@@ -91,7 +91,8 @@ does not authorize switching the dashboard proxy. Keep the service restricted to
 trusted development/staging access; this PR adds no authentication or team ownership.
 
 The single saved-plan execution adapter is documented in
-`dashboard-plan-execution.md`. Remaining gates include suite/instruction execution
+`dashboard-plan-execution.md`; selected-suite adaptation is documented in
+`dashboard-suite-execution.md`. Remaining gates include instruction execution
 DTO adapters, approved selector-decision routes,
 authorized artifact serving, all-time execution metrics, durable jobs where needed,
 and real dashboard/FastAPI/PostgreSQL/browser acceptance before a dedicated proxy
