@@ -31,6 +31,7 @@ jobs:
       - run: npm run build -w apps/target-app
       - run: npx playwright install --with-deps chromium
       - run: npm run test:requests -w apps/dashboard
+      - run: npm run test:api -w apps/dashboard
 
   python:
     name: FastAPI contracts and local plan browser tests

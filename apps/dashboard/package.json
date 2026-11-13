@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test:requests": "node --test test/save-delete.test.mjs",
+    "test:api": "node --test test/api-errors.test.mjs",
     "dev": "vite --host 0.0.0.0 --port 5174",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5174"

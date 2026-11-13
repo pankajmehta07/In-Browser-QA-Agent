@@ -73,8 +73,9 @@ HTTP connection is not evidence that execution stopped. Review website state
 before manually repeating tests, and avoid conflicting concurrent executions.
 
 The current dashboard's request builder and error helper are NOT wired to this
-route. A future UI integration must preserve the 503 response body for partial
-results instead of discarding it. This is an adapter, not full UI compatibility
+route. The shared client now retains error bodies as described in
+`dashboard-api-error-context.md`; future views must still render the partial
+report explicitly. This is an adapter, not full UI compatibility
 acceptance or a proxy cutover. Native routes, Express, database schema and
 environment settings are unchanged.
 
