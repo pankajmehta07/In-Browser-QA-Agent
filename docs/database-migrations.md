@@ -3,7 +3,8 @@
 The migration infrastructure depends on the project CI PR. It does not cut the
 dashboard over to FastAPI or import the local prototype. Migration 0002 adds
 [versioned test definitions](versioned-test-plans.md) in a dependent feature PR;
-the dry-run importer and execution cutover remain separate work.
+the [read-only import preview](import-preview.md) is a further dependent PR.
+The actual import writer and execution cutover remain separate work.
 
 ## How it works
 

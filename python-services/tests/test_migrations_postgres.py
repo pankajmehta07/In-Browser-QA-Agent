@@ -174,3 +174,29 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(current["name"], "Original")
             self.assertEqual(current["revision"], 1)
             self.assertEqual(len(await store.list_test_revisions(str(saved["id"]))), 1)
+
+    async def test_import_preview_reads_destination_without_writing(self):
+        from stores.import_preview import preview, read_destination
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Retain", "instruction": "Click Login"})
+            conninfo = make_conninfo(os.environ["MIGRATION_TEST_ADMIN_DSN"], dbname=self.database)
+            destination = await asyncio.to_thread(read_destination, conninfo)
+            report = preview({"format_version": 1, "records": [{"team_id": "local", "kind": "test", "id": str(saved["id"]), "data": {"name": "Imported", "instruction": "Click Login"}}]}, team="local", destination=destination)
+            self.assertEqual(report["counts"]["rejected"], 1)
+            self.assertEqual(report["items"][0]["issues"], ["destination_id_conflict"])
+            self.assertEqual((await store.get_test_by_id(str(saved["id"])))["name"], "Retain")
+            self.assertEqual(len(await store.list_test_revisions(str(saved["id"]))), 1)
+
+    async def test_prototype_export_sql_is_team_scoped_and_excludes_secrets(self):
+        await self.connection.execute("CREATE TABLE records (team_id TEXT, kind TEXT, id TEXT, data JSONB)")
+        await self.connection.execute("CREATE TABLE test_revisions (team_id TEXT, test_id TEXT, revision INT, data JSONB)")
+        await self.connection.execute("""INSERT INTO records VALUES
+            ('local','test','one','{}'), ('other','test','two','{}'),
+            ('local','secret','private','{}'), ('local','job','queued','{}')""")
+        await self.connection.execute("INSERT INTO test_revisions VALUES ('local','one',1,'{}'), ('other','two',1,'{}')")
+        query = (Path(__file__).resolve().parents[2] / "db" / "export-prototype.sql").read_text()
+        cursor = await self.connection.execute(query.replace(":'team'", "%s"), ("local", "local"))
+        exported = (await cursor.fetchone())[0]
+        self.assertEqual([row["id"] for row in exported["records"]], ["one"])
+        self.assertEqual([row["test_id"] for row in exported["revisions"]], ["one"])
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM records"), 4)
