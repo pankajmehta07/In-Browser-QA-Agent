@@ -2,10 +2,9 @@
 -- QA Agent — Database Initialization Script
 -- Runs automatically on first `docker compose up`
 -- ============================================================
--- To extend the schema:
---   1. Add new CREATE TABLE or ALTER TABLE below
---   2. Update schema.sql to match
---   3. Run: docker compose down -v && docker compose up
+-- This file only initializes a NEW volume; it does not upgrade existing data.
+-- Add ordered migrations in python-services/migrations/ for schema changes.
+-- Never remove volumes to upgrade. See docs/database-migrations.md.
 -- ============================================================
 
 

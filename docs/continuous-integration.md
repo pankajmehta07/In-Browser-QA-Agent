@@ -8,10 +8,11 @@ The `Project CI` workflow runs on pull requests targeting `develop` or `main`, p
 | --- | --- | --- |
 | Frontend | Node parser tests, both Vite builds, and dashboard save/delete browser regressions | Chromium is installed in the runner; dashboard API calls are mocked. |
 | Python | JSON parsing, rerun classification, diagnostics, FastAPI handlers, and mocked Groq output | Installs the Python service requirements; no database server, browser binary, or real API key is required. |
+| Migrations | Fresh and legacy schema upgrades, rollback, repeat application, checksum validation and concurrent migrators | Ephemeral PostgreSQL 18 service; no real application database or provider key. |
 
 The Python suite is deliberately discovered only under `python-services/tests`. Existing files in `test_scripts` are manual smoke scripts that can open a real browser/database. They are not CI unit tests.
 
-These checks do not establish real PostgreSQL compatibility, production readiness, live provider quality, or complete website coverage. Add isolated database migration/integration jobs with the storage PR. Do not run authorized external write/security probes in PR CI.
+The migration job exercises real PostgreSQL, but these checks do not establish full application/database integration, production readiness, live provider quality, or complete website coverage. Do not run authorized external write/security probes in PR CI. See [Database migrations](database-migrations.md) for backup, restore and explicit migration commands.
 
 The current Starlette TestClient emits a deprecation warning for its httpx integration. It does not fail these tests; a test-client dependency migration can be reviewed separately. This PR does not suppress the warning or change runtime dependencies.
 
@@ -37,6 +38,10 @@ python -X utf8 -m unittest discover -s python-services/tests -v
 ```
 
 For Bash, replace the PowerShell environment assignment with `export PYTHONPATH="$PWD/python-services"`. UTF-8 mode keeps the existing Rich logger's symbols readable in Windows terminals. Keep credentials out of the shell history and repository. Groq tests replace the provider client and use a synthetic test key; CI supplies no real key.
+
+Migration database tests skip locally unless `MIGRATION_TEST_ADMIN_DSN` explicitly
+targets an isolated disposable cluster with CREATEDB permission. They create and
+drop uniquely named test databases; never use a shared or production cluster.
 
 ## Branch dependency
 

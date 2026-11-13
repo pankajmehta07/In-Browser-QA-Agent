@@ -1,12 +1,9 @@
 -- ============================================================
 -- QA Agent Database Schema
 -- ============================================================
--- This file is the source of truth for the database structure.
--- To apply changes:
---   1. Update this file
---   2. Copy changes to init.sql
---   3. Rebuild postgres container:
---      docker compose down -v && docker compose up
+-- Fresh-install schema reference. Existing databases use ordered migrations
+-- in python-services/migrations/. Never remove volumes to upgrade a schema.
+-- See docs/database-migrations.md for backup, status and apply commands.
 -- ============================================================
 
 

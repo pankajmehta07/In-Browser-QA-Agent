@@ -50,3 +50,35 @@ jobs:
             python-services/requirements-test.txt
       - run: python -m pip install -r python-services/requirements-test.txt
       - run: python -X utf8 -m unittest discover -s python-services/tests -v
+
+  migrations:
+    name: PostgreSQL migration integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: qa_migration
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qa_migration -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PYTHONPATH: python-services
+      GROQ_API_KEY: ""
+      MIGRATION_TEST_ADMIN_DSN: postgresql://qa_migration:ci-only-disposable@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            python-services/requirements.txt
+            python-services/requirements-test.txt
+      - run: python -m pip install -r python-services/requirements-test.txt
+      - run: python -X utf8 -m unittest discover -s python-services/tests -p test_migrations_postgres.py -v
