@@ -101,7 +101,7 @@ def _result(value, *, depth=0):
         raise ValueError("Invalid stored execution result")
     if value.get("type") in ("suite", "selected_plan_suite"):
         raise ValueError("Suite result adaptation is not installed")
-    result = {key: deepcopy(value[key]) for key in ("status", "flaky", "startedAt", "finishedAt", "accessibility", "phases", "parser") if key in value}
+    result = {key: deepcopy(value[key]) for key in ("status", "flaky", "startedAt", "finishedAt", "accessibility", "phases", "parser", "screenshotCapture") if key in value}
     result.update(_aliases(value, {
         "durationMs": "duration_ms", "errorMessage": "error_message", "runNumber": "run_number",
         "testId": "test_id", "testRevision": "test_revision", "targetUrl": "target_url",

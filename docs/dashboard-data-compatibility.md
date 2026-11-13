@@ -107,6 +107,9 @@ The all-time metrics endpoint and counting rules are documented in
 `dashboard-execution-metrics.md`; the current dashboard is not rewired to it.
 Revision-aware edit and history contracts are documented in
 `dashboard-test-revisions.md`; the current dashboard save flow is unchanged.
+The separate review-only LLM planning endpoint is documented in
+`dashboard-instruction-preview.md`; it does not execute instructions or complete
+the instruction-execution compatibility gate.
 
 No new schema migration or runtime feature flag is introduced. Existing
 `ENABLE_SAVED_PLAN_RUNS` behavior applies only to native execution, not these CRUD

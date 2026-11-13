@@ -95,3 +95,47 @@ class PlanBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["counts"]["completed"], 2)
         self.assertEqual(save.await_count, 2)
+
+    async def test_instruction_preview_observes_real_controls_without_executing_draft(self):
+        import json
+        from api.instruction_preview import preview_instruction
+        from parser.natural_language import InstructionResponse
+        steps = [{"action": "type", "target": "Name", "value": "Must not be entered"},
+                 {"action": "click", "target": "Save"}]
+        with patch.dict(os.environ, {"TARGET_APP_URL": self.url}), \
+             patch("core.browser.launch_browser", new_callable=AsyncMock, return_value=self.session), \
+             patch("core.browser.close_browser", new_callable=AsyncMock) as close, \
+             patch("parser.natural_language.respond_to_instruction", new_callable=AsyncMock,
+                   return_value=InstructionResponse(kind="test", steps_json=json.dumps(steps))) as ai:
+            result = await preview_instruction("Enter a name and save")
+        self.assertEqual(result["status"], "draft")
+        self.assertEqual(await self.session.page.get_by_label("Name").input_value(), "")
+        self.assertEqual(await self.session.page.locator("#record").text_content(), "Empty")
+        self.assertIsNone(await self.session.page.evaluate("localStorage.getItem('suite-marker')"))
+        self.assertIn("Save", [node.name for node in ai.await_args.kwargs["snapshot"].nodes])
+        close.assert_awaited_once_with(self.session)
+
+    async def test_failed_saved_plan_captures_readable_viewport_evidence(self):
+        import tempfile
+        from pathlib import Path
+        from api.dashboard_dto import _result
+        from api.run_screenshots import read_screenshot
+        from core.saved_plan import execute_prepared_plan
+        plan = TestPlan(schema_version=1, steps=[{"action": "goto", "target": "Missing heading"}])
+        definition = PreparedPlan("00000000-0000-0000-0000-000000000001", 1,
+                                  {"instruction": "Check missing heading", "plan": plan.model_dump()}, plan)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {"ENABLE_RUN_SCREENSHOT_CAPTURE": "true", "RUN_SCREENSHOT_ROOT": directory}), \
+             patch("core.saved_plan.save_run", new_callable=AsyncMock,
+                   return_value={"id": "00000000-0000-0000-0000-000000000002"}) as save:
+            result = await execute_prepared_plan(definition, self.url)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["screenshotCapture"]["status"], "captured")
+            path = save.await_args.args[0]["screenshotPath"]
+            content = read_screenshot(path, directory)
+            self.assertTrue(content.startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertEqual(len(list(Path(directory).glob("*.png"))), 1)
+            mapped = _result(result)
+            self.assertEqual(mapped["screenshotCapture"]["status"], "captured")
+            self.assertNotIn("screenshot_path", mapped)
+            self.assertEqual(mapped["artifactAvailability"], "not_exposed")

@@ -50,8 +50,9 @@ failures use the sanitized compatibility 503 response.
 
 No screenshot capture, trace downloads, retention policy, file migration or schema
 change is introduced. The legacy runner can already persist `screenshot_path`;
-the newer saved-plan executor currently does not capture screenshots, so its runs
-usually have no image to serve. Missing evidence does not cause a test rerun.
+the newer saved-plan executor only captures when the separate opt-in feature in
+`saved-plan-failure-screenshots.md` is enabled. Without it, those runs usually have
+no image to serve. Missing evidence does not cause a test rerun.
 
 The dashboard and run DTOs are not rewired here. Their existing
 `artifactAvailability: not_exposed` marker remains unchanged; it indicates no

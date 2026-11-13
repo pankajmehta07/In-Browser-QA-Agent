@@ -1,6 +1,7 @@
 """Explicit saved-plan execution, isolated from the legacy instruction pipeline."""
 
 import re
+import os
 import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from core.browser import close_browser, launch_browser, navigate_to
+from core.run_evidence import capture_screenshot
 from parser.models import ParsedStep
 from parser.step_runner import run_steps
 from parser.test_plan import TestPlan
@@ -122,6 +124,16 @@ async def execute_prepared_plan(prepared: PreparedPlan, url):
         else:
             result = {"status": "failed", "steps": [], "phases": {}, "duration_ms": 0,
                       "error_message": "Target navigation failed or left the configured origin"}
+        if result["status"] == "failed" and os.getenv("ENABLE_RUN_SCREENSHOT_CAPTURE", "false").lower() == "true":
+            try:
+                if _origin(session.page.url) != origin:
+                    result["screenshotCapture"] = {"status": "skipped", "reason": "Page is outside the configured origin"}
+                else:
+                    path = await capture_screenshot(session.page, os.getenv("RUN_SCREENSHOT_ROOT", ""))
+                    result["screenshot_path"] = path
+                    result["screenshotCapture"] = {"status": "captured", "timing": "after_execution_before_close"}
+            except Exception:
+                result["screenshotCapture"] = {"status": "unavailable", "reason": "Failure evidence could not be captured; the test outcome is unchanged"}
     finally:
         await close_browser(session)
     result.update(test_id=test_id, test_revision=revision, definition_snapshot=snapshot,
@@ -131,6 +143,8 @@ async def execute_prepared_plan(prepared: PreparedPlan, url):
     payload = {"status": result["status"], "durationMs": result["duration_ms"], "runCount": 1,
                "instruction": snapshot["instruction"], "variant": snapshot.get("variant", "original"),
                "healedCount": healed, "wasHealed": healed > 0, "result": result}
+    if result.get("screenshot_path"):
+        payload["screenshotPath"] = result["screenshot_path"]
     try:
         saved = await save_run(payload)
     except Exception as exc:

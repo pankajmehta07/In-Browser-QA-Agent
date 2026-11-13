@@ -106,7 +106,9 @@ request after a timeout or 503. There is no durable job/idempotency key yet.
 - Persistence failures do not auto-repeat actions. Unexpected browser startup or
   infrastructure exceptions may still be HTTP 500; inspect service diagnostics.
 - A dependent [selected-suite PR](selected-plan-suites.md) adds an explicit native
-  suite endpoint. Retries, schedules, visual baselines, screenshot/trace capture,
+  suite endpoint. Optional PNG capture is described in
+  [failure screenshots](saved-plan-failure-screenshots.md). Retries, schedules,
+  visual baselines, trace capture,
   the full dashboard DTO adapter and compatibility proxy cutover remain separate.
 - Passing configured steps is not proof that all business requirements are covered.
 

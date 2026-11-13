@@ -3,9 +3,7 @@
 import stat
 from pathlib import Path
 
-
-MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+from core.run_evidence import MAX_SCREENSHOT_BYTES, PNG_SIGNATURE
 
 
 class ScreenshotUnavailable(Exception):

@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from api.dashboard_dto import _result, approval_dto, metrics_dto, revision_dto, run_dto, suite_dto, test_dto
 from api.routers.tests import RunSavedPlanRequest, RunSelectedSuiteRequest
 from api.run_screenshots import read_screenshot, ScreenshotConfigurationError, ScreenshotUnavailable
+from api.instruction_preview import preview_instruction
 from core.saved_suite import execute_selected_suite
 from core.saved_plan import (
     PlanPersistenceError, SavedPlanNotFound, _origin,
@@ -77,6 +78,36 @@ class DashboardTestUpdateRequest(DashboardTestRequest):
     expectedRevision: int = Field(ge=1, strict=True)
     variant: Literal["original", "changed", "flaky"]
     reruns: int = Field(ge=1, le=5, strict=True)
+
+
+class InstructionPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instruction: str = Field(min_length=1, max_length=10000)
+    confirmPageRead: bool = Field(strict=True)
+    allowAI: bool = Field(strict=True)
+
+    @field_validator("instruction")
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("Instruction must not be blank")
+        return value
+
+    @field_validator("confirmPageRead", "allowAI")
+    @classmethod
+    def consent(cls, value):
+        if not value:
+            raise ValueError("Explicit page-read and provider consent are required")
+        return value
+
+
+@router.post("/instructions/preview")
+async def instruction_preview(body: InstructionPreviewRequest):
+    if os.getenv("ENABLE_INSTRUCTION_PREVIEW", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Instruction preview is disabled")
+    if not os.getenv("GROQ_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="AI planning provider is not configured")
+    return await preview_instruction(body.instruction)
 
 
 class DashboardApprovalRequest(BaseModel):

@@ -67,8 +67,8 @@ acceptance remain separate work before proxy cutover.
 
 The existing executor persists each completed result once and closes its browser
 in its normal finally path. Setup/test/optional cleanup behavior is unchanged.
-Artifacts are not captured by that saved-plan path. No schema migration or new
-environment variable is required.
+Optional failure capture is documented in `saved-plan-failure-screenshots.md` and
+is disabled by default. This adapter itself requires no schema migration.
 
 ## Verification
 
