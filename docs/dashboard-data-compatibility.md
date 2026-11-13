@@ -90,7 +90,9 @@ browser availability, LLM configuration or full execution parity. A green respon
 does not authorize switching the dashboard proxy. Keep the service restricted to
 trusted development/staging access; this PR adds no authentication or team ownership.
 
-Remaining gates include execution DTO adapters, approved selector-decision routes,
+The single saved-plan execution adapter is documented in
+`dashboard-plan-execution.md`. Remaining gates include suite/instruction execution
+DTO adapters, approved selector-decision routes,
 authorized artifact serving, all-time execution metrics, durable jobs where needed,
 and real dashboard/FastAPI/PostgreSQL/browser acceptance before a dedicated proxy
 cutover PR. Recent-run list length is not an all-time total and must not be used as

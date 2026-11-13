@@ -1,6 +1,7 @@
-"""Dashboard data contracts only; execution and artifact adapters are separate."""
+"""Dashboard data and explicit saved-plan contracts; no proxy cutover."""
 
 import logging
+import os
 import uuid
 from typing import Literal
 from uuid import UUID
@@ -11,7 +12,12 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.dashboard_dto import run_dto, test_dto
+from api.dashboard_dto import _result, run_dto, test_dto
+from api.routers.tests import RunSavedPlanRequest
+from core.saved_plan import (
+    PlanPersistenceError, SavedPlanNotFound, _origin,
+    execute_prepared_plan, prepare_saved_plan,
+)
 from parser.test_plan import TestPlan
 from stores.db import get_pool
 from stores.run_store import get_run_by_id, list_runs
@@ -112,3 +118,40 @@ async def get_run(run_id: UUID):
     if row is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run_dto(row)
+
+
+def execution_error(status_code, message, state):
+    return JSONResponse(status_code=status_code, content={
+        "status": "failed", "errorMessage": message,
+        "executionState": state, "safeToRetry": False,
+    })
+
+
+@router.post("/tests/{test_id}/run-plan")
+async def run_plan(test_id: UUID, body: RunSavedPlanRequest):
+    if os.getenv("ENABLE_SAVED_PLAN_RUNS", "false").lower() != "true":
+        return execution_error(403, "Saved-plan execution is disabled", "not_started")
+    target = os.getenv("TARGET_APP_URL", "http://127.0.0.1:5173/")
+    try:
+        _origin(target)
+        prepared = await prepare_saved_plan(str(test_id), body.revision)
+    except SavedPlanNotFound:
+        return execution_error(404, "Saved test or revision not found", "not_started")
+    except ValueError:
+        return execution_error(409, "Review the saved plan, placeholders, variant, rerun count and server target before execution", "not_started")
+    except Exception:
+        return execution_error(503, "Execution preflight could not complete; no browser was started", "not_started")
+    try:
+        raw = await execute_prepared_plan(prepared, target)
+        result = _result(raw)
+        if result.get("status") not in ("passed", "failed"):
+            raise ValueError("Invalid execution status")
+        result.update(savedRunId=str(UUID(raw["saved_run_id"])),
+                      executionState="completed", safeToRetry=False)
+        return result
+    except PlanPersistenceError:
+        return execution_error(503, "Browser execution finished but its result could not be saved. Do not automatically rerun it.", "completed_unsaved")
+    except Exception as exc:
+        error_id = str(uuid.uuid4())
+        logger.error("Compatibility execution %s failed: %s", error_id, type(exc).__name__)
+        return execution_error(503, f"Execution could not be confirmed. Inspect run history and the website before retrying. Reference: {error_id}", "unknown")
