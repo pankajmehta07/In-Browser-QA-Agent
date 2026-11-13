@@ -200,3 +200,23 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["id"] for row in exported["records"]], ["one"])
         self.assertEqual([row["test_id"] for row in exported["revisions"]], ["one"])
         self.assertEqual(await self.scalar("SELECT COUNT(*) FROM records"), 4)
+
+    async def test_saved_plan_persists_exact_snapshot_despite_later_edit_and_delete(self):
+        from types import SimpleNamespace
+        from core.saved_plan import execute_saved_plan
+        candidate = {"schema_version": 1, "steps": [{"action": "check_visible", "target": "Login"}]}
+        async with self.version_store() as store:
+            saved = await store.save_test({"name": "Pinned original", "instruction": "Check Login", "plan": candidate})
+            async def execute(*args, **kwargs):
+                await store.update_test(str(saved["id"]), {"name": "Edited during execution", "expected_revision": 1})
+                return {"status": "passed", "steps": [], "phases": {}}
+            with patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=await store.get_pool()), \
+                 patch("core.saved_plan.launch_browser", new_callable=AsyncMock, return_value=SimpleNamespace(page=SimpleNamespace(url="http://127.0.0.1:5173/"))), \
+                 patch("core.saved_plan.navigate_to", new_callable=AsyncMock, return_value=True), \
+                 patch("core.saved_plan.close_browser", new_callable=AsyncMock), \
+                 patch("core.saved_plan.execute_plan", side_effect=execute):
+                report = await execute_saved_plan(str(saved["id"]), 1, "http://127.0.0.1:5173/")
+            await store.delete_test(str(saved["id"]))
+        self.assertEqual(await self.scalar("SELECT result_json->'definition_snapshot'->>'name' FROM runs WHERE id = %s", (report["saved_run_id"],)), "Pinned original")
+        self.assertEqual(await self.scalar("SELECT result_json->>'test_revision' FROM runs"), "1")
+        self.assertTrue(await self.scalar("SELECT started_at IS NOT NULL FROM runs"))

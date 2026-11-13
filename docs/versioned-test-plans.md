@@ -112,4 +112,6 @@ job discovers this PR's additional database cases. Tests cover legacy backfill,
 fresh initialization, plan validation/round-trip, no-op edits, retained history,
 simultaneous stale edits, direct SQL changes and snapshot-write rollback.
 
-The importer, run-to-revision linking and plan-aware execution are separate PRs.
+The import writer remains separate. A dependent [saved-plan execution PR](saved-plan-execution.md)
+adds opt-in phase execution and exact snapshots in run JSON; dashboard cutover and
+relational run-to-revision linkage remain later work.

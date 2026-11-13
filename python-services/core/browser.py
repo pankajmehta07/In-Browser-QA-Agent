@@ -69,14 +69,23 @@ async def launch_browser(headless: bool = True) -> BrowserSession:
 
     log_info(f"Launching Chromium ({'headful' if not headless else 'headless'})...")
 
-    playwright = await async_playwright().start()
-
-    browser = await playwright.chromium.launch(
-        headless=headless,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",],
-    )
-
-    page = await browser.new_page()
+    playwright = None
+    try:
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.launch(
+            headless=headless,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",],
+        )
+        page = await browser.new_page()
+    except BaseException:
+        if playwright is not None:
+            try:
+                await playwright.stop()
+            except Exception:
+                log_warning("Could not stop the failed browser driver.")
+        if xvfb_process:
+            stop_xvfb(xvfb_process)
+        raise
 
     log_success("Browser launched successfully.")
 
@@ -121,13 +130,17 @@ async def close_browser(session: BrowserSession):
     """
     try:
         await session.browser.close()
-        await session.playwright.stop()
         log_info("Browser closed.")
     except Exception as error:
         log_warning(f"Error while closing browser: {error}")
 
-    if session.xvfb_process:
-        stop_xvfb(session.xvfb_process)
+    finally:
+        try:
+            await session.playwright.stop()
+        except Exception:
+            log_warning("Could not stop the browser driver.")
+        if session.xvfb_process:
+            stop_xvfb(session.xvfb_process)
 
 
 async def take_screenshot(page: Page, output_path: str) -> bool:

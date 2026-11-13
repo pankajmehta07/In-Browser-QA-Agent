@@ -1,8 +1,11 @@
+import os
+
 from fastapi import APIRouter, HTTPException
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from core.saved_plan import execute_saved_plan, PlanPersistenceError, SavedPlanNotFound
 from parser.test_plan import TestPlan
 
 from stores.test_store import (
@@ -33,6 +36,19 @@ class UpdateTestRequest(BaseModel):
     reruns: int | None = None
     plan: TestPlan | None = None
     expected_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
+class RunSavedPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1, strict=True)
+    confirm_execution: bool = Field(strict=True)
+
+    @field_validator("confirm_execution")
+    @classmethod
+    def confirmed(cls, value):
+        if not value:
+            raise ValueError("Explicit execution confirmation is required")
+        return value
 
 
 @router.get("")
@@ -100,6 +116,22 @@ async def get_test_revisions(test_id: UUID):
     if not history and not await get_test_by_id(str(test_id)):
         raise HTTPException(status_code=404, detail="Test not found")
     return history
+
+
+@router.post("/{test_id}/run-plan")
+async def run_saved_plan(test_id: UUID, body: RunSavedPlanRequest):
+    if os.getenv("ENABLE_SAVED_PLAN_RUNS", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Saved-plan execution is disabled")
+    target = os.getenv("TARGET_APP_URL", "http://127.0.0.1:5173/")
+    try:
+        return await execute_saved_plan(str(test_id), body.revision, target)
+    except SavedPlanNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        # Pydantic errors may echo stored values, so return only a safe instruction.
+        raise HTTPException(status_code=409, detail="Review the saved plan, placeholders, variant and rerun count before execution") from exc
+    except PlanPersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.delete("/{test_id}")

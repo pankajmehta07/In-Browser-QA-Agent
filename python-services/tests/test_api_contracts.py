@@ -100,3 +100,26 @@ class ApiContracts(TestCase):
              patch("api.routers.tests.get_test_by_id", new_callable=AsyncMock, return_value=None):
             response = self.client.get("/tests/00000000-0000-0000-0000-000000000001/revisions")
         self.assertEqual(response.status_code, 404)
+
+    def test_saved_plan_route_is_disabled_by_default(self):
+        with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "false"}):
+            response = self.client.post("/tests/00000000-0000-0000-0000-000000000001/run-plan", json={"revision": 1, "confirm_execution": True})
+        self.assertEqual(response.status_code, 403)
+
+    def test_saved_plan_route_requires_confirmation_and_revision(self):
+        for body in [{"revision": 1, "confirm_execution": False}, {"confirm_execution": True}]:
+            with self.subTest(body=body), patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true"}):
+                response = self.client.post("/tests/00000000-0000-0000-0000-000000000001/run-plan", json=body)
+                self.assertEqual(response.status_code, 422)
+
+    def test_saved_plan_route_uses_only_configured_target(self):
+        with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true", "TARGET_APP_URL": "http://target-app:5173/"}), \
+             patch("api.routers.tests.execute_saved_plan", new_callable=AsyncMock, return_value={"status": "passed", "saved_run_id": "one"}) as execute:
+            response = self.client.post("/tests/00000000-0000-0000-0000-000000000001/run-plan", json={"revision": 1, "confirm_execution": True})
+        self.assertEqual(response.status_code, 200)
+        execute.assert_awaited_once_with("00000000-0000-0000-0000-000000000001", 1, "http://target-app:5173/")
+
+    def test_saved_plan_route_rejects_arbitrary_url_override(self):
+        with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true"}):
+            response = self.client.post("/tests/00000000-0000-0000-0000-000000000001/run-plan", json={"revision": 1, "confirm_execution": True, "url": "https://example.com"})
+        self.assertEqual(response.status_code, 422)

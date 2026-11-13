@@ -33,7 +33,7 @@ jobs:
       - run: npm run test:requests -w apps/dashboard
 
   python:
-    name: FastAPI and Python unit contracts
+    name: FastAPI contracts and local plan browser tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -50,6 +50,10 @@ jobs:
             python-services/requirements-test.txt
       - run: python -m pip install -r python-services/requirements-test.txt
       - run: python -X utf8 -m unittest discover -s python-services/tests -v
+      - run: python -m playwright install --with-deps chromium
+      - run: python -X utf8 -m unittest discover -s python-services/tests -p test_saved_plan_browser.py -v
+        env:
+          RUN_PLAN_BROWSER_TESTS: "1"
 
   migrations:
     name: PostgreSQL migration integration

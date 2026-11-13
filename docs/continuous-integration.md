@@ -8,6 +8,7 @@ The `Project CI` workflow runs on pull requests targeting `develop` or `main`, p
 | --- | --- | --- |
 | Frontend | Node parser tests, both Vite builds, and dashboard save/delete browser regressions | Chromium is installed in the runner; dashboard API calls are mocked. |
 | Python | JSON parsing, rerun classification, diagnostics, FastAPI handlers, and mocked Groq output | Installs the Python service requirements; no database server, browser binary, or real API key is required. |
+| Python browser fixture | Saved-plan setup/test/cleanup execution against loopback-only synthetic controls | Installs Chromium; no real database, provider key or external website writes. |
 | Migrations | Fresh and legacy schema upgrades, rollback, repeat application, checksum validation and concurrent migrators | Ephemeral PostgreSQL 18 service; no real application database or provider key. |
 
 The Python suite is deliberately discovered only under `python-services/tests`. Existing files in `test_scripts` are manual smoke scripts that can open a real browser/database. They are not CI unit tests.
@@ -42,6 +43,10 @@ For Bash, replace the PowerShell environment assignment with `export PYTHONPATH=
 Migration database tests skip locally unless `MIGRATION_TEST_ADMIN_DSN` explicitly
 targets an isolated disposable cluster with CREATEDB permission. They create and
 drop uniquely named test databases; never use a shared or production cluster.
+
+The Python job also installs Chromium and explicitly enables `RUN_PLAN_BROWSER_TESTS=1`
+for `test_saved_plan_browser.py`. Other local runs skip those tests unless opted in.
+See [Saved-plan execution](saved-plan-execution.md) for the feature's runtime limits.
 
 ## Branch dependency
 

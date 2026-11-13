@@ -81,6 +81,7 @@ services:
       TARGET_APP_URL: http://target-app:5173
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      ENABLE_SAVED_PLAN_RUNS: ${ENABLE_SAVED_PLAN_RUNS:-false}
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${POSTGRES_DB:-qa_agent}
