@@ -220,3 +220,25 @@ class PostgresMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.scalar("SELECT result_json->'definition_snapshot'->>'name' FROM runs WHERE id = %s", (report["saved_run_id"],)), "Pinned original")
         self.assertEqual(await self.scalar("SELECT result_json->>'test_revision' FROM runs"), "1")
         self.assertTrue(await self.scalar("SELECT started_at IS NOT NULL FROM runs"))
+
+    async def test_selected_suite_saves_only_selected_individual_runs(self):
+        from types import SimpleNamespace
+        from core.saved_suite import execute_selected_suite
+        candidate = {"schema_version": 1, "steps": [{"action": "check_visible", "target": "Login"}]}
+        async with self.version_store() as store:
+            one = await store.save_test({"name": "One", "instruction": "Check Login", "plan": candidate})
+            two = await store.save_test({"name": "Two", "instruction": "Check Login", "plan": candidate})
+            await store.save_test({"name": "Excluded", "instruction": "Check Login", "plan": candidate})
+            await store.update_test(str(one["id"]), {"name": "One edited", "expected_revision": 1})
+            async def execute(*args, **kwargs):
+                return {"status": "passed", "steps": [], "phases": {}}
+            with patch("stores.run_store.get_pool", new_callable=AsyncMock, return_value=await store.get_pool()), \
+                 patch("core.saved_plan.launch_browser", new_callable=AsyncMock, side_effect=lambda **kwargs: SimpleNamespace(page=SimpleNamespace(url="http://127.0.0.1:5173/"))), \
+                 patch("core.saved_plan.navigate_to", new_callable=AsyncMock, return_value=True), \
+                 patch("core.saved_plan.close_browser", new_callable=AsyncMock), \
+                 patch("core.saved_plan.execute_plan", side_effect=execute):
+                report = await execute_selected_suite([{"test_id": str(one["id"]), "revision": 1}, {"test_id": str(two["id"]), "revision": 1}], "http://127.0.0.1:5173/")
+        self.assertEqual(report["counts"]["completed"], 2)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM runs"), 2)
+        cursor = await self.connection.execute("SELECT result_json->'definition_snapshot'->>'name' FROM runs")
+        self.assertEqual({row[0] for row in await cursor.fetchall()}, {"One", "Two"})

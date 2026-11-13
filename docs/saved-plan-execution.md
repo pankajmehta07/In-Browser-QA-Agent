@@ -105,8 +105,9 @@ request after a timeout or 503. There is no durable job/idempotency key yet.
   or undo completed website changes. There is no cancellation/job UI in this PR.
 - Persistence failures do not auto-repeat actions. Unexpected browser startup or
   infrastructure exceptions may still be HTTP 500; inspect service diagnostics.
-- No suite execution, retries, schedules, visual baselines, screenshot/trace capture,
-  full dashboard DTO adapter, or compatibility proxy cutover is added here.
+- A dependent [selected-suite PR](selected-plan-suites.md) adds an explicit native
+  suite endpoint. Retries, schedules, visual baselines, screenshot/trace capture,
+  the full dashboard DTO adapter and compatibility proxy cutover remain separate.
 - Passing configured steps is not proof that all business requirements are covered.
 
 The import preview stays read-only. An import writer still needs a reviewed schema,

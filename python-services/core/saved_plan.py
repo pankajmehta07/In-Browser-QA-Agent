@@ -2,7 +2,8 @@
 
 import re
 import time
-from dataclasses import asdict
+from copy import deepcopy
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -20,6 +21,14 @@ class SavedPlanNotFound(LookupError):
 
 class PlanPersistenceError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class PreparedPlan:
+    test_id: str
+    revision: int
+    snapshot: dict
+    plan: TestPlan
 
 
 def _origin(url):
@@ -71,9 +80,8 @@ async def execute_plan(page, plan: TestPlan, *, expected_origin=None):
             "duration_ms": int((time.perf_counter() - started) * 1000)}
 
 
-async def execute_saved_plan(test_id, revision, url):
-    """Caller must authorize execution and supply an operator-approved target."""
-    origin = _origin(url)
+async def prepare_saved_plan(test_id, revision):
+    """Load and validate a pinned definition without performing browser actions."""
     if type(revision) is not int or revision < 1:
         raise ValueError("Choose a positive saved revision")
     if not await get_test_by_id(test_id):
@@ -82,7 +90,7 @@ async def execute_saved_plan(test_id, revision, url):
     selected = next((item for item in history if item["revision"] == revision), None)
     if selected is None:
         raise SavedPlanNotFound("Saved test revision not found")
-    snapshot = selected["snapshot"]
+    snapshot = deepcopy(selected["snapshot"])
     if not snapshot.get("plan"):
         raise ValueError("This revision has no structured plan; save a reviewed plan first")
     if snapshot.get("variant", "original") != "original" or snapshot.get("reruns", 1) != 1:
@@ -91,6 +99,20 @@ async def execute_saved_plan(test_id, revision, url):
     for step in [*plan.setup, *plan.steps, *plan.cleanup]:
         if any(re.search(r"\{\{.*?\}\}", value) for value in (step.target, step.value) if isinstance(value, str)):
             raise ValueError("Resolve test-data placeholders before executing this plan")
+    return PreparedPlan(test_id, revision, snapshot, plan)
+
+
+async def execute_saved_plan(test_id, revision, url):
+    """Caller must authorize execution and supply an operator-approved target."""
+    _origin(url)
+    prepared = await prepare_saved_plan(test_id, revision)
+    return await execute_prepared_plan(prepared, url)
+
+
+async def execute_prepared_plan(prepared: PreparedPlan, url):
+    """Execute a previously validated snapshot; internal callers must authorize it."""
+    origin = _origin(url)
+    test_id, revision, snapshot, plan = prepared.test_id, prepared.revision, prepared.snapshot, prepared.plan
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
     session = await launch_browser(headless=True)

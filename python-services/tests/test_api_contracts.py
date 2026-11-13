@@ -123,3 +123,37 @@ class ApiContracts(TestCase):
         with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true"}):
             response = self.client.post("/tests/00000000-0000-0000-0000-000000000001/run-plan", json={"revision": 1, "confirm_execution": True, "url": "https://example.com"})
         self.assertEqual(response.status_code, 422)
+
+    def test_selected_suite_is_disabled_by_default(self):
+        with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "false"}):
+            response = self.client.post("/tests/run-selected-plans", json={"tests": [{"test_id": "00000000-0000-0000-0000-000000000001", "revision": 1}], "confirm_execution": True})
+        self.assertEqual(response.status_code, 403)
+
+    def test_selected_suite_rejects_empty_duplicates_and_unconfirmed_requests(self):
+        item = {"test_id": "00000000-0000-0000-0000-000000000001", "revision": 1}
+        bodies = [{"tests": [], "confirm_execution": True}, {"tests": [item, item], "confirm_execution": True},
+                  {"tests": [item], "confirm_execution": False}, {"tests": [item], "confirm_execution": True, "url": "https://example.com"},
+                  {"tests": [{**item, "revision": True}], "confirm_execution": True}, {"tests": [item] * 11, "confirm_execution": True}]
+        for body in bodies:
+            with self.subTest(body=body), patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true"}):
+                response = self.client.post("/tests/run-selected-plans", json=body)
+                self.assertEqual(response.status_code, 422)
+
+    def test_selected_suite_uses_configured_target(self):
+        item = {"test_id": "00000000-0000-0000-0000-000000000001", "revision": 1}
+        with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true", "TARGET_APP_URL": "http://target-app:5173/"}), \
+             patch("api.routers.tests.execute_selected_suite", new_callable=AsyncMock, return_value={"status": "passed", "stop_reason": None}) as execute:
+            response = self.client.post("/tests/run-selected-plans", json={"tests": [item], "confirm_execution": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(execute.call_args.args[1], "http://target-app:5173/")
+        self.assertEqual(str(execute.call_args.args[0][0].test_id), item["test_id"])
+
+    def test_interrupted_suite_preserves_partial_report_in_503_response(self):
+        report = {"type": "selected_plan_suite", "status": "incomplete", "stop_reason": "persistence_failed",
+                  "safe_to_retry": False, "counts": {"selected": 1, "completed": 0, "passed": 0, "failed": 0, "errors": 1, "not_run": 0},
+                  "tests": [{"state": "completed_unsaved", "status": "unknown", "saved_run_id": None}]}
+        with patch.dict("os.environ", {"ENABLE_SAVED_PLAN_RUNS": "true"}), \
+             patch("api.routers.tests.execute_selected_suite", new_callable=AsyncMock, return_value=report):
+            response = self.client.post("/tests/run-selected-plans", json={"tests": [{"test_id": "00000000-0000-0000-0000-000000000001", "revision": 1}], "confirm_execution": True})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), report)

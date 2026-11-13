@@ -4,17 +4,21 @@ import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import AsyncMock, patch
 
 from core.browser import close_browser, launch_browser, navigate_to
-from core.saved_plan import execute_plan, _origin
+from core.saved_plan import execute_plan, _origin, PreparedPlan
+from core.saved_suite import execute_selected_suite
 from parser.test_plan import TestPlan
 
 
 HTML = b'''<!doctype html><html><body><h1>Plan fixture</h1>
 <label for="name">Name</label><input id="name">
-<button onclick="document.getElementById('record').textContent=document.getElementById('name').value">Save</button>
+<button onclick="document.getElementById('record').textContent=document.getElementById('name').value;localStorage.setItem('suite-marker','written')">Save</button>
 <button onclick="document.getElementById('record').textContent='Cleared'">Reset</button>
-<h2 id="record">Empty</h2></body></html>'''
+<h2 id="record">Empty</h2>
+<script>if(localStorage.getItem('suite-marker'))document.getElementById('record').textContent='Reused storage';</script>
+</body></html>'''
 
 
 class FixtureHandler(BaseHTTPRequestHandler):
@@ -76,3 +80,18 @@ class PlanBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["phases"]["test"]["status"], "passed")
         self.assertEqual(result["phases"]["cleanup"]["status"], "failed")
         self.assertEqual(result["status"], "failed")
+
+    async def test_selected_suite_uses_fresh_browser_storage_for_each_case(self):
+        first = TestPlan.model_validate({"schema_version": 1,
+            "setup": [{"action": "type", "target": "Name", "value": "Suite record"}],
+            "steps": [{"action": "click", "target": "Save"}, {"action": "check_visible", "target": "Suite record"}]})
+        second = TestPlan.model_validate({"schema_version": 1, "steps": [{"action": "check_visible", "target": "Empty"}]})
+        one, two = "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"
+        definitions = [PreparedPlan(one, 1, {"name": "First", "instruction": "First", "plan": first.model_dump()}, first),
+                       PreparedPlan(two, 1, {"name": "Second", "instruction": "Second", "plan": second.model_dump()}, second)]
+        with patch("core.saved_suite.prepare_saved_plan", new_callable=AsyncMock, side_effect=definitions), \
+             patch("core.saved_plan.save_run", new_callable=AsyncMock, side_effect=[{"id": "run-one"}, {"id": "run-two"}]) as save:
+            report = await execute_selected_suite([{"test_id": one, "revision": 1}, {"test_id": two, "revision": 1}], self.url)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["counts"]["completed"], 2)
+        self.assertEqual(save.await_count, 2)
