@@ -1,0 +1,52 @@
+name: Project CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend builds and mocked browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build -w apps/dashboard
+      - run: npm run build -w apps/target-app
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:requests -w apps/dashboard
+
+  python:
+    name: FastAPI and Python unit contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GROQ_API_KEY: ""
+      PYTHONPATH: python-services
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            python-services/requirements.txt
+            python-services/requirements-test.txt
+      - run: python -m pip install -r python-services/requirements-test.txt
+      - run: python -X utf8 -m unittest discover -s python-services/tests -v
