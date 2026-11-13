@@ -7,6 +7,7 @@ import {
   UserRound, Users, X,
 } from "lucide-react";
 import "./style.css";
+import "./workspace-theme.css";
 
 function getInitialVariant() {
   const variant = new URLSearchParams(window.location.search).get("variant");

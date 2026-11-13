@@ -1,0 +1,156 @@
+/* Visual-only port from the local Acme workspace; existing demo behavior is unchanged. */
+:root {
+  --ink: #192e29;
+  --muted: #5e7067;
+  --line: #d7e6dc;
+  --surface: #fff;
+  --green: #147d52;
+  --green-dark: #0e6742;
+  --green-soft: #e4f5eb;
+  --lime: #a7ebc2;
+}
+
+body, .product-shell, .app-main { background: #f4f8f5; }
+body { font-size: 15px; line-height: 1.5; }
+h1, h2, h3 { text-wrap: balance; }
+h1 { font-size: 32px; }
+p { text-wrap: pretty; }
+input, select, textarea { border-color: #c9dcd0; }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px #d6f0e0;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 3px;
+}
+.icon-button { width: 44px; height: 44px; }
+.icon-button:hover { border-color: var(--line); background: #eaf5ee; }
+
+.login-page { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
+.login-story { background: #15392a; }
+.brand-mark { background: #87e4b5; color: #103c29; }
+.story-content h1 { font-size: 48px; }
+.story-content > p:not(.story-kicker) { color: #d6eee0; }
+.story-proof, .story-footnote { color: #c0e5ce; }
+.avatar-stack span { border-color: #15392a; background: #d6eee0; color: #15392a; }
+.login-card { padding: 28px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.login-card h2 { font-size: 28px; }
+.login-card label { font-size: 14px; }
+.login-hint code { color: var(--muted); }
+.variant-button { color: var(--muted); }
+
+.product-shell { grid-template-columns: 252px minmax(0, 1fr); }
+.sidebar { padding: 30px 16px 20px; }
+.sidebar .brand { margin: 0 8px 40px; }
+.sidebar nav { gap: 5px; }
+.nav-label { margin: 15px 11px 10px; color: var(--muted); font-size: 11px; }
+/* Override the legacy generic button rule without changing navigation markup. */
+.sidebar nav button, .sidebar-footer > button {
+  min-height: 46px;
+  justify-content: flex-start !important;
+  border: 0 !important;
+  border-radius: 7px;
+  padding: 10px 13px;
+  background: transparent !important;
+  color: #53645a !important;
+  text-align: left;
+}
+.sidebar nav button.active, .sidebar nav button:hover,
+.sidebar-footer > button:hover { background: #e3f5ea !important; color: #0e6742 !important; }
+.company-avatar { background: #176c48; }
+.profile-button > span, .activity-avatar, .user-avatar,
+.profile-avatar-large { background: #e3f5ea; }
+.app-header { padding-inline: 32px; background: var(--surface); }
+.header-left, .header-actions { min-width: 0; }
+.global-search { width: min(390px, 30vw); }
+.page-content { max-width: 1510px; padding: 32px; }
+.page-heading > div { min-width: 0; }
+.page-heading p { max-width: 68ch; }
+
+.metric-grid { gap: 14px; margin-bottom: 22px; }
+.metric { min-height: 160px; padding: 20px; box-shadow: none; }
+.metric > div { min-width: 0; }
+.metric-icon { width: 42px; height: 42px; }
+.metric p { font-size: 13px; }
+.metric strong { margin: 8px 0 12px; font-size: 34px; font-variant-numeric: tabular-nums; }
+.metric small { font-size: 12px; }
+.metric-icon.green { background: #e3f5ea; color: #147d52; }
+.dashboard-grid { grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); }
+.surface, .project-card { border-radius: 8px; box-shadow: none; }
+.surface-heading { padding: 20px 22px; }
+.surface-heading h2 { font-size: 18px; }
+.project-row { padding-block: 18px; }
+.project-copy > div { flex-wrap: wrap; }
+.project-copy strong, .project-card h2, .member-cell strong { overflow-wrap: anywhere; }
+.project-icon { background: #edf5f1; }
+.project-card { min-width: 0; }
+.project-card:hover { border-color: #9cbdab; }
+.progress-label strong, .project-row > b { font-variant-numeric: tabular-nums; }
+.table-head { background: #f4f8f5; color: var(--muted); }
+.setting-row { position: relative; }
+.setting-row input {
+  inset-inline-start: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.setting-row input:focus-visible + i { outline: 2px solid var(--green); outline-offset: 3px; }
+.playground-check, .counter-panel { border-color: var(--line); }
+.modal-backdrop { overflow-y: auto; background: rgb(18 43 31 / 46%); }
+.modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
+.modal-heading h2 { overflow-wrap: anywhere; }
+.modal-actions { flex-wrap: wrap; }
+.toast { max-width: calc(100vw - 32px); border-color: #c9ded2; color: #176c48; }
+.toast > span { flex-shrink: 0; }
+
+@media (max-width: 1200px) {
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-grid { grid-template-columns: 1fr; }
+  .login-story { padding: 38px; }
+  .story-content h1 { font-size: 40px; }
+}
+@media (max-width: 780px) {
+  .login-page { grid-template-columns: minmax(0, 1fr); }
+  .login-workspace { padding: 100px 20px 32px; }
+  .login-toolbar { right: 24px; }
+  .login-card { padding: 24px; }
+  .product-shell { display: block; }
+  .sidebar { width: 252px; height: 100dvh; overflow-y: auto; }
+  .sidebar .brand { margin-bottom: 32px; }
+  .app-header { height: 68px; padding-inline: 18px; gap: 8px; }
+  .header-actions { gap: 5px; }
+  .page-content { padding: 24px 18px; }
+  .page-heading { gap: 16px; }
+  .page-heading h1 { font-size: 28px; }
+  .project-grid, .billing-grid { grid-template-columns: minmax(0, 1fr); }
+  .surface-heading { padding: 18px; }
+  .project-list { padding-inline: 16px; }
+  .data-table { overflow-x: auto; }
+  .table-row { min-width: 640px; }
+  .modal-backdrop { padding: 16px; }
+  .modal { max-height: calc(100dvh - 32px); }
+}
+@media (max-width: 480px) {
+  .page-content { padding: 20px 14px; }
+  .metric-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .metric { min-height: 132px; padding: 18px; }
+  .metric strong { font-size: 30px; }
+  .profile-button { padding: 0; }
+  .variant-control select { width: 130px; min-width: 130px; max-width: none; }
+  .login-card { padding: 20px; }
+  .toast { right: 16px; bottom: 16px; }
+  .project-copy > div { align-items: flex-start; gap: 5px; }
+  .activity-feed li { padding-inline: 16px; }
+}
+@media (max-width: 360px) {
+  .app-header { padding-inline: 10px; }
+  .header-actions { gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .setting-row i, .setting-row i::after { transition: none; }
+}
