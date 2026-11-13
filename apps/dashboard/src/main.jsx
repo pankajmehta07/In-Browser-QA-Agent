@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { API_BASE_URL, apiRequest, jsonRequest } from "./api.js";
 import "./styles.css";
+import "./workspace-theme.css";
 
 const defaultInstruction = `Go to Login.
 Type user@example.com into Email.
@@ -116,11 +117,40 @@ function App() {
   const [testSearch, setTestSearch] = useState("");
   const [runFilter, setRunFilter] = useState("all");
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  // Guard same-frame clicks before React updates the disabled buttons.
+  const saveInFlight = useRef(false);
+  const deleteInFlight = useRef(false);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
     initialize();
   }, []);
+
+  function notify(message, tone = "success") {
+    setToast({ message, tone });
+    window.setTimeout(() => setToast(null), 3200);
+  }
+
+  async function checkService() {
+    try {
+      await apiRequest("/health");
+      setServiceStatus("online");
+    } catch (error) {
+      setServiceStatus("offline");
+      notify(error.message, "error");
+    }
+  }
+
+  async function initialize() {
+    try {
+      await Promise.all([loadTests(), loadRuns(), checkService()]);
+    } finally {
+      setIsLoadingData(false);
+    }
+  }
 
   async function loadRuns() {
     try {
@@ -135,12 +165,14 @@ function App() {
 
   async function loadTests() {
     try {
-      const response = await fetch(`${API_BASE_URL}/tests`);
-      const data = await response.json();
+      const data = await apiRequest("/tests");
+      if (!Array.isArray(data)) throw new Error("The test library returned an invalid response.");
       setTests(data);
+      return true;
     } catch (error) {
       setServiceStatus("offline");
       notify(error.message, "error");
+      return false;
     }
   }
 
@@ -195,28 +227,30 @@ function App() {
   }
 
   async function saveCurrentTest() {
-    const response = await fetch(`${API_BASE_URL}/tests`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: testName,
-        instruction,
-        variant,
-        reruns,
-      }),
-    });
-
+    if (saveInFlight.current) return;
+    const name = testName.trim();
+    if (!name) {
+      notify("Enter a test name before saving.", "error");
+      return;
+    }
+    if (!instruction.trim()) {
+      notify("Enter instructions before saving.", "error");
+      return;
+    }
+    saveInFlight.current = true;
+    setIsSaving(true);
     try {
       await apiRequest(
         "/tests",
-        jsonRequest("POST", { name: testName.trim(), instruction, variant, reruns }),
+        jsonRequest("POST", { name, instruction, variant, reruns }),
       );
-      await loadTests();
-      notify("Test saved to the library.");
+      const refreshed = await loadTests();
+      notify(refreshed ? "Test saved to the library." : "Test saved, but the library refresh failed. Use Refresh rather than saving again.", refreshed ? "success" : "error");
     } catch (error) {
       notify(error.message, "error");
+    } finally {
+      saveInFlight.current = false;
+      setIsSaving(false);
     }
   }
 
@@ -282,18 +316,6 @@ function App() {
     }
   }
 
-  async function deleteSavedTest(testId) {
-    try {
-      await fetch(`${API_BASE_URL}/tests/${testId}`, {
-        method: "DELETE",
-      });
-
-      await loadTests();
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
   async function runInstruction() {
     setIsRunning(true);
     setResult(null);
@@ -329,25 +351,36 @@ function App() {
     });
   }
 
-  async function confirmDeleteTest() {
-    if (!pendingDelete) return;
-    try {
-      const response = await fetch(`${API_BASE_URL}/run-test-suite`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          variant,
-          reruns,
-        }),
-      });
+  function requestDelete(test) {
+    if (deleteInFlight.current) return;
+    setDeleteError("");
+    setPendingDelete(test);
+  }
 
-      const data = await response.json();
-      setResult(data);
-      await loadRuns();
+  function cancelDelete() {
+    if (deleteInFlight.current) return;
+    setPendingDelete(null);
+    setDeleteError("");
+  }
+
+  async function confirmDeleteTest() {
+    if (!pendingDelete || deleteInFlight.current) return;
+    const testId = pendingDelete.id;
+    deleteInFlight.current = true;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      await apiRequest(`/tests/${encodeURIComponent(testId)}`, { method: "DELETE" });
+      setTests(current => current.filter(test => test.id !== testId));
+      setSelectedTestIds(current => current.filter(id => id !== testId));
+      setPendingDelete(null);
+      const refreshed = await loadTests();
+      notify(refreshed ? "Test deleted from the library." : "Test deleted, but the library refresh failed. Use Refresh to reload the library.", refreshed ? "success" : "error");
     } catch (error) {
-      notify(error.message, "error");
+      setDeleteError(error.message);
+    } finally {
+      deleteInFlight.current = false;
+      setIsDeleting(false);
     }
   }
 
@@ -458,6 +491,7 @@ function App() {
               isRunning={isRunning}
               stats={stats}
               saveCurrentTest={saveCurrentTest}
+              isSaving={isSaving}
               runInstruction={runInstruction}
               runTestSuite={runTestSuite}
               submitApproval={submitApproval}
@@ -476,7 +510,7 @@ function App() {
               runSavedTest={runSavedTest}
               runSuite={runTestSuite}
               isRunning={isRunning}
-              setPendingDelete={setPendingDelete}
+              setPendingDelete={requestDelete}
               refresh={loadTests}
               createTest={() => changeView("runner")}
             />
@@ -498,7 +532,7 @@ function App() {
         </div>
       </section>
 
-      {pendingDelete && <ConfirmDialog title="Delete saved test?" description={`This will permanently remove "${pendingDelete.name}" from the test library.`} confirmLabel="Delete test" onCancel={() => setPendingDelete(null)} onConfirm={confirmDeleteTest} />}
+      {pendingDelete && <ConfirmDialog title="Delete saved test?" description={`This will permanently remove "${pendingDelete.name}" from the test library.`} confirmLabel={isDeleting ? "Deleting..." : "Delete test"} busy={isDeleting} error={deleteError} onCancel={cancelDelete} onConfirm={confirmDeleteTest} />}
       {toast && <Toast {...toast} />}
     </main>
   );
@@ -523,7 +557,7 @@ function RunnerView(props) {
           <div className="inline-fields"><div className="form-field"><label htmlFor="variant">Target DOM</label><select id="variant" value={props.variant} onChange={(event) => props.setVariant(event.target.value)}><option value="original">Original DOM</option><option value="changed">Changed DOM</option><option value="flaky">Flaky DOM</option></select></div><div className="form-field"><label htmlFor="reruns">Repeat</label><select id="reruns" value={props.reruns} onChange={(event) => props.setReruns(Number(event.target.value))}><option value={1}>1 run</option><option value={3}>3 runs</option><option value={5}>5 runs</option></select></div></div>
           <div className="form-field instruction-field"><label htmlFor="instruction">Instructions</label><textarea id="instruction" value={props.instruction} onChange={(event) => props.setInstruction(event.target.value)} spellCheck="false" /></div>
           <details className="grammar-guide"><summary>Supported actions <span>20 patterns</span></summary><div>{grammarExamples.map((example) => <button type="button" key={example} onClick={() => props.setInstruction((current) => `${current.trim()}\n${example}.`)}><code>{example}</code><Plus size={13} /></button>)}</div></details>
-          <div className="composer-actions"><button className="secondary-button" type="button" onClick={props.saveCurrentTest}><Save size={16} />Save test</button><button className="secondary-button" type="button" onClick={props.runTestSuite} disabled={props.isRunning}><LayoutDashboard size={16} />Run saved suite</button><button type="button" onClick={props.runInstruction} disabled={props.isRunning}>{props.isRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}{props.isRunning ? "Running" : "Generate and run"}</button></div>
+          <div className="composer-actions"><button className="secondary-button" type="button" onClick={props.saveCurrentTest} disabled={props.isSaving}><Save size={16} />{props.isSaving ? "Saving..." : "Save test"}</button><button className="secondary-button" type="button" onClick={props.runTestSuite} disabled={props.isRunning}><LayoutDashboard size={16} />Run saved suite</button><button type="button" onClick={props.runInstruction} disabled={props.isRunning}>{props.isRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}{props.isRunning ? "Running" : "Generate and run"}</button></div>
         </section>
 
         <section className="surface result-panel">
@@ -600,8 +634,8 @@ function RunningState() {
   return <div className="running-state"><span className="runner-pulse"><LoaderCircle size={24} className="spin" /></span><h3>Running in Chromium</h3><p>The agent is executing your scenario and collecting evidence.</p><div><i /><i /><i /></div></div>;
 }
 
-function ConfirmDialog({ title, description, confirmLabel, onCancel, onConfirm }) {
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><span className="danger-dialog-icon"><Trash2 size={20} /></span><h2 id="confirm-title">{title}</h2><p>{description}</p><div><button className="secondary-button" type="button" onClick={onCancel}>Cancel</button><button className="danger-button" type="button" onClick={onConfirm}>{confirmLabel}</button></div></section></div>;
+function ConfirmDialog({ title, description, confirmLabel, busy = false, error, onCancel, onConfirm }) {
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-busy={busy}><span className="danger-dialog-icon"><Trash2 size={20} /></span><h2 id="confirm-title">{title}</h2><p>{description}</p>{error && <p className="error-banner" role="alert">{error}</p>}<div><button className="secondary-button" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button className="danger-button" type="button" onClick={onConfirm} disabled={busy}>{confirmLabel}</button></div></section></div>;
 }
 
 function Toast({ message, tone }) {
